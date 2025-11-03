@@ -88,10 +88,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        files: |
-          Voice2Text-Windows/Voice2Text.exe
-          Voice2Text-macOS/Voice2Text
-          Voice2Text-Linux/Voice2Text
+       with:
+         files: |
+           Voice2Text-Windows/Voice2Text.exe
+           Voice2Text-macOS/Voice2Text
         draft: false
         prerelease: false
