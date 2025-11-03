@@ -61,15 +61,15 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.8'
-    - name: Install PortAudio
-      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-    - name: Build executable
-      run: pyinstaller voice_app.spec
+     - name: Install PortAudio
+       run: sudo apt-get update && sudo apt-get install -y portaudio19-dev xvfb
+     - name: Install dependencies
+       run: |
+         python -m pip install --upgrade pip
+         pip install -r requirements.txt
+         pip install pyinstaller
+     - name: Build executable
+       run: xvfb-run pyinstaller voice_app.spec
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
