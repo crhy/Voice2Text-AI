@@ -13,7 +13,6 @@
     "--socket=pulseaudio"
   ],
   "modules": [
-    "python3",
     {
       "name": "voice2text",
       "buildsystem": "simple",

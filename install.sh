@@ -61,7 +61,7 @@ ollama pull qwen2.5:0.5b
 
 # Install the flatpak
 echo "Installing Voice2Text AI flatpak..."
-flatpak install -y --user com.voice2text.app.flatpak
+flatpak install -y flathub com.voice2text.app
 
 # Test Ollama
 echo "Testing Ollama..."

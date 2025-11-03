@@ -50,28 +50,8 @@ jobs:
         name: Voice2Text-macOS
         path: dist/Voice2Text
 
-  build-flatpak:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Install flatpak
-      run: sudo apt-get update && sudo apt-get install -y flatpak
-    - name: Add flathub repo
-      run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-    - name: Install flatpak-builder
-      run: flatpak install -y flathub org.flatpak.Builder
-    - name: Build flatpak
-      run: flatpak run org.flatpak.Builder --repo=repo build-dir com.voice2text.app.json
-    - name: Bundle flatpak
-      run: flatpak build-bundle repo com.voice2text.app.flatpak com.voice2text.app
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Voice2Text-Flatpak
-        path: com.voice2text.app.flatpak
-
   release:
-    needs: [build-windows, build-macos, build-flatpak]
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -87,7 +67,6 @@ jobs:
         files: |
           Voice2Text-Windows/Voice2Text.exe
           Voice2Text-macOS/Voice2Text
-          Voice2Text-Flatpak/com.voice2text.app.flatpak
           install.sh
         draft: false
         prerelease: false

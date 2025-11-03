@@ -6,7 +6,7 @@
 
 - [Windows](https://github.com/crhy/Voice2Text-AI/releases/download/v0.2/Voice2Text.exe)
 - [macOS](https://github.com/crhy/Voice2Text-AI/releases/download/v0.2/Voice2Text)
-- [Linux (Flatpak)](https://github.com/crhy/Voice2Text-AI/releases/download/v0.2/com.voice2text.app.flatpak)
+- [Linux (Flatpak)](https://flathub.org/apps/com.voice2text.app)
 
 A cross-platform Python application that transcribes voice input using GPU-accelerated Whisper, sends text to local Ollama AI models for intelligent responses, and reads the output aloud with text-to-speech.
 
@@ -42,9 +42,9 @@ chmod +x install.sh
 ```
 This is the easiest way to get started on Linux.
 
-If you already have Ollama installed, manually install the flatpak:
+If you already have Ollama installed, install the flatpak from Flathub:
 ```bash
-flatpak install https://github.com/crhy/Voice2Text-AI/releases/download/v0.2/com.voice2text.app.flatpak
+flatpak install flathub com.voice2text.app
 ```
 
 ### Option 3: From Source
