@@ -1,6 +1,6 @@
 # Voice2Text AI
 
-<img src="v2tlogo.png?v=2" alt="Voice2Text AI Logo" width="200"/>
+<img src="logo.png" alt="Voice2Text AI Logo" width="200"/>
 
 A cross-platform Python application that transcribes voice input using GPU-accelerated Whisper, sends text to local Ollama AI models for intelligent responses, and reads the output aloud with text-to-speech.
 
