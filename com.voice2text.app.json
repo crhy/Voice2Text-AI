@@ -13,19 +13,12 @@
     "--socket=pulseaudio"
   ],
   "modules": [
-    {
-      "name": "python3-pip",
-      "buildsystem": "simple",
-      "build-commands": [
-        "pip3 install --user --upgrade pip"
-      ],
-      "sources": []
-    },
+    "python3",
     {
       "name": "voice2text",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --user -r requirements.txt",
+        "pip3 install --prefix=/app -r requirements.txt",
         "mkdir -p /app/bin",
         "cp voice_app.py /app/bin/",
         "cp voice_config.json /app/bin/",
