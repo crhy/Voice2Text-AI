@@ -2,6 +2,10 @@
 
 <img src="logo.png" alt="Voice2Text AI Logo" width="200"/>
 
+## Application Screenshot
+
+<img src="Screenshot at 2025-11-03 01-22-46.png" alt="Voice2Text AI Application Screenshot" width="600"/>
+
 ## Downloads
 
 - [Windows](https://github.com/crhy/Voice2Text-AI/releases/download/v0.2/Voice2Text.exe)
@@ -18,6 +22,81 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 - 🎨 Modern dark gradient UI
 - 📦 Cross-platform executables (Windows/macOS/Linux)
 - 🖥️ Flatpak available on Flathub
+
+## Project Structure
+
+```
+OpenCode/
+├── Voice2Text/
+│   ├── public/
+│   │   ├── electron.js
+│   │   ├── favicon.ico
+│   │   └── index.html
+│   ├── src/
+│   │   ├── Components/
+│   │   │   ├── Details/
+│   │   │   │   ├── Details.css
+│   │   │   │   └── Details.jsx
+│   │   │   ├── Editor/
+│   │   │   │   ├── assets/
+│   │   │   │   │   └── star.png
+│   │   │   │   ├── Editor.css
+│   │   │   │   └── Editor.jsx
+│   │   │   ├── Navbar/
+│   │   │   │   ├── Navbar.css
+│   │   │   │   └── Navbar.jsx
+│   │   │   └── Options/
+│   │   │       ├── assets/
+│   │   │       │   ├── headset.png
+│   │   │       │   ├── headset_on.png
+│   │   │       │   ├── star.png
+│   │   │       │   ├── trash.png
+│   │   │       │   └── volume.png
+│   │   │       ├── Options.css
+│   │   │       └── Options.jsx
+│   │   ├── App.css
+│   │   ├── App.js
+│   │   ├── index.css
+│   │   └── index.js
+│   ├── .gitattributes
+│   ├── .gitignore
+│   ├── README.md
+│   ├── com.voice2text.app.desktop
+│   ├── com.voice2text.app.metainfo.xml
+│   ├── com.voice2text.app.yml
+│   ├── electron.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── requirements.txt
+│   ├── run_voice_app.sh
+│   ├── test_whisper.py
+│   ├── voice_app.py
+│   └── voice_config.json
+├── Voice2Text-Windows/
+│   └── Voice2Text.exe
+├── Voice2Text-macOS/
+│   └── Voice2Text
+├── flathub-repo/
+│   └── com.voice2text.app/
+│       └── com.voice2text.app.yml
+├── voice_env/
+│   └── (Python virtual environment files)
+├── README.md
+├── VOICE_README.md
+├── buildozer.spec
+├── config.json
+├── main.py
+├── opencode.json
+├── requirements.txt
+├── test_voice.py
+├── test_whisper.py
+├── voice_app.desktop
+├── voice_app.py
+├── voice_app.spec
+├── voice_app_kivy.py
+├── voice_config.json
+└── voice_to_opencode.py
+```
 
 ## Requirements
 
