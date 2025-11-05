@@ -21,9 +21,9 @@ modules:
         - type: git
           url: https://github.com/crhy/Voice2Text-AI.git
           tag: v0.3
-          commit: 85e4237
+          commit: 68c3a5b
        - type: file
          path: logo.png
-    post-install:
-      - install -Dm644 voice_app.desktop /app/share/applications/com.voice2text.app.desktop
+     post-install:
+       - install -Dm644 voice_app.desktop /app/share/applications/com.voice2text.app.desktop
        - install -Dm644 logo.png /app/share/icons/hicolor/512x512/apps/com.voice2text.app.png
