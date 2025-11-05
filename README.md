@@ -33,7 +33,11 @@ Download the latest release from [GitHub Releases](https://github.com/crhy/Voice
 
 ### Linux (Flatpak)
 ```bash
+# Install from Flathub (when available)
 flatpak install flathub com.voice2text.app
+
+# Or download from GitHub Releases
+# Look for: voice2text.flatpak
 ```
 
 ### From Source
@@ -56,7 +60,11 @@ python test_whisper.py
 pyinstaller voice_app.spec
 
 # Build Flatpak
-flatpak-builder build com.voice2text.app.yml --force-clean
+flatpak-builder --force-clean build com.voice2text.app.yml
+flatpak-builder --user --install build com.voice2text.app.yml
+
+# Export Flatpak for distribution
+flatpak build-bundle build voice2text.flatpak com.voice2text.app
 ```
 
 ### Setup Ollama
@@ -122,6 +130,25 @@ Voice2Text-AI/
 ├── logo.png             # Application logo
 ├── install.sh           # Linux installer
 └── README.md
+```
+
+## Distribution
+
+### Building Releases
+```bash
+# Create GitHub release with all platform binaries
+# Upload these files to GitHub Releases:
+# - Voice2Text.exe (Windows)
+# - Voice2Text (macOS)
+# - voice2text.flatpak (Linux)
+```
+
+### Flathub Submission
+To submit to Flathub for official distribution:
+```bash
+# Fork the Flathub repository
+# Add your manifest to: https://github.com/flathub/flathub
+# Submit pull request with com.voice2text.app.yml
 ```
 
 ## Contributing
