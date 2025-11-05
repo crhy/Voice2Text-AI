@@ -18,10 +18,10 @@ modules:
       - cp voice_app.py /app/bin/
       - cp voice_config.json /app/bin/ || true
      sources:
-       - type: git
-         url: https://github.com/crhy/Voice2Text-AI.git
-         tag: v0.2
-         commit: 8fb243c
+        - type: git
+          url: https://github.com/crhy/Voice2Text-AI.git
+          tag: v0.3
+          commit: 85e4237
        - type: file
          path: logo.png
     post-install:
