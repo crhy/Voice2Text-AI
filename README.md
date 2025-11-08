@@ -19,10 +19,10 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 
 ## Requirements
 
-- Python 3.8+
-- Ollama running locally (http://localhost:11434)
-- Microphone access
-- CUDA-compatible GPU (optional, for faster Whisper processing)
+- Python 3.8+ (maybe, I think the standalone app runs without it)
+- Ollama running locally (http://localhost:11434) (only for AI interaction)
+- Microphone access (The whole point is dictation)
+- CUDA-compatible GPU (optional, for faster Whisper processing.  Highly recommended.)
 
 ## Installation
 
@@ -30,6 +30,7 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 Download the latest release from [GitHub Releases](https://github.com/crhy/Voice2Text-AI/releases):
 - **Windows**: `Voice2Text.exe`
 - **macOS**: `Voice2Text`
+- **Linux*: 'Voice2Text' https://drive.google.com/file/d/1MmF6Vr_3nz1yket2SdnHCI_Od5OpIzQd/view?usp=sharing
 
 ### Linux (Flatpak)
 ```bash
