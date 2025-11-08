@@ -13,6 +13,7 @@ import time
 from gtts import gTTS
 import pygame
 import audioop
+from kokoro_tts import KokoroTTS, KOKORO_VOICES
 
 class DictationApp:
     def __init__(self, root):
@@ -41,6 +42,13 @@ class DictationApp:
 
         # Recognition method
         self.recognizer_method = tk.StringVar(value=self.config.get('recognizer', 'Google'))
+
+        # TTS engine
+        self.tts_engine = tk.StringVar(value=self.config.get('tts_engine', 'gTTS'))
+
+        # Kokoro voices
+        self.kokoro_voices = KOKORO_VOICES
+        self.selected_voice = tk.StringVar(value=self.config.get('voice', 'af_heart'))
 
 
 
@@ -80,7 +88,9 @@ class DictationApp:
             'input_device': self.selected_input.get(),
             'output_device': self.selected_output.get(),
             'model': self.selected_model.get(),
-            'recognizer': self.recognizer_method.get()
+            'recognizer': self.recognizer_method.get(),
+            'tts_engine': self.tts_engine.get(),
+            'voice': self.selected_voice.get()
         }
         try:
             with open(self.config_file, 'w') as f:
@@ -118,7 +128,7 @@ class DictationApp:
         # Configure grid
         self.root.columnconfigure(1, weight=1)
         self.root.columnconfigure(2, weight=1)
-        self.root.rowconfigure(3, weight=1)
+        self.root.rowconfigure(4, weight=1)
 
         # Audio devices on left
         tk.Label(self.root, text="Input Device (Microphone):", bg='#333333', fg='white', font=('Helvetica', 10, 'bold'), relief='flat').grid(row=0, column=0, pady=5, padx=10, sticky='w')
@@ -138,6 +148,16 @@ class DictationApp:
         self.recognizer_combo = ttk.Combobox(self.root, textvariable=self.recognizer_method, values=['Google', 'Sphinx'])
         self.recognizer_combo.grid(row=2, column=1, pady=5, padx=10, sticky='ew')
 
+        # TTS Engine
+        tk.Label(self.root, text="TTS Engine:", bg='#333333', fg='white', font=('Helvetica', 10, 'bold'), relief='flat').grid(row=3, column=0, pady=5, padx=10, sticky='w')
+        self.tts_combo = ttk.Combobox(self.root, textvariable=self.tts_engine, values=['gTTS', 'kokoro'])
+        self.tts_combo.grid(row=3, column=1, pady=5, padx=10, sticky='ew')
+
+        # Kokoro Voice
+        tk.Label(self.root, text="Kokoro Voice:", bg='#333333', fg='white', font=('Helvetica', 10, 'bold'), relief='flat').grid(row=3, column=2, pady=5, padx=10, sticky='w')
+        self.voice_combo = ttk.Combobox(self.root, textvariable=self.selected_voice, values=self.kokoro_voices)
+        self.voice_combo.grid(row=3, column=3, pady=5, padx=10, sticky='ew')
+
         # Model on right
         tk.Label(self.root, text="Ollama Model:", bg='#333333', fg='white', font=('Helvetica', 10, 'bold'), relief='flat').grid(row=0, column=2, pady=5, padx=10, sticky='w')
         self.model_combo = ttk.Combobox(self.root, textvariable=self.selected_model, values=self.models)
@@ -147,15 +167,15 @@ class DictationApp:
 
         # Text area
         self.text_area = scrolledtext.ScrolledText(self.root, height=15, width=60, bg='#333333', fg='white', insertbackground='white')
-        self.text_area.grid(row=3, column=0, columnspan=4, pady=10, padx=10, sticky='nsew')
+        self.text_area.grid(row=4, column=0, columnspan=4, pady=10, padx=10, sticky='nsew')
 
         # Status
         self.status_label = tk.Label(self.root, textvariable=self.status_var, bg='#333333', fg='white')
-        self.status_label.grid(row=5, column=0, columnspan=4, pady=5)
+        self.status_label.grid(row=6, column=0, columnspan=4, pady=5)
 
         # Buttons
         button_frame = tk.Frame(self.root, bg='#333333')
-        button_frame.grid(row=6, column=0, columnspan=4, pady=10)
+        button_frame.grid(row=7, column=0, columnspan=4, pady=10)
 
         # VU disabled
         # vu_frame = tk.Frame(button_frame, bg='#333333', relief='sunken', bd=2)
@@ -368,19 +388,32 @@ class DictationApp:
         threading.Thread(target=self._speak_response, args=(text,)).start()
 
     def _speak_response(self, text):
+        engine = self.tts_engine.get()
         try:
-            tts = gTTS(text)
-            temp_file = 'temp_tts.mp3'
-            tts.save(temp_file)
-            sound = pygame.mixer.Sound(temp_file)
-            self.current_channel = sound.play()
-            self.tts_paused = False
-            self.pause_tts_button.config(text="Pause TTS")
-            while self.current_channel and self.current_channel.get_busy():
-                time.sleep(0.1)
-            os.remove(temp_file)
+            temp_file = None
+            
+            if engine == 'gTTS':
+                tts = gTTS(text)
+                temp_file = 'temp_tts.mp3'
+                tts.save(temp_file)                
+                
+            elif engine == 'kokoro':
+                # Initialize Kokoro TTS
+                kokoro = KokoroTTS(lang_code=self.selected_voice.get()[0], speed=1.0)  # American English
+                temp_file = 'temp_tts_kokoro.wav'
+                kokoro.synthesize(text, voice=self.selected_voice.get(), output_path=temp_file)
+            
+            if temp_file:
+                sound = pygame.mixer.Sound(temp_file)
+                self.current_channel = sound.play()
+                self.tts_paused = False
+                self.pause_tts_button.config(text="Pause TTS")
+                while self.current_channel and self.current_channel.get_busy():
+                    time.sleep(0.1)
+                os.remove(temp_file)
+                
         except Exception as e:
-            self.text_area.insert(tk.END, f"TTS error: {e}\n")
+            self.text_area.insert(tk.END, f"TTS error ({engine}): {e}\n")
         finally:
             self.current_channel = None
             self.status_var.set("Ready")
