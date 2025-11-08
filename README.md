@@ -30,7 +30,7 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 Download the latest release from [GitHub Releases](https://github.com/crhy/Voice2Text-AI/releases):
 - **Windows**: `Voice2Text.exe`
 - **macOS**: `Voice2Text`
-- **Linux*: 'Voice2Text' https://drive.google.com/file/d/1MmF6Vr_3nz1yket2SdnHCI_Od5OpIzQd/view?usp=sharing
+- **Linux**: 'Voice2Text' https://drive.google.com/file/d/1MmF6Vr_3nz1yket2SdnHCI_Od5OpIzQd/view?usp=sharing
 
 ### Linux (Flatpak)
 ```bash
