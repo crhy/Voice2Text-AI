@@ -9,3 +9,5 @@ gTTS
 pygame
 pillow
 edge-tts
+soundfile
+kokoro>=0.9.4
