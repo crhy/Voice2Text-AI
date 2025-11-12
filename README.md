@@ -28,11 +28,11 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 
 ### Pre-built Executables
 Download the latest release from [GitHub Releases](https://github.com/crhy/Voice2Text-AI/releases):
-- **Windows**: `Voice2Text.exe`
-- **macOS**: `Voice2Text`
+- **Windows**: `Voice2Text.exe` Untested
+- **macOS**: `Voice2Text` Untested
 - **Linux**: 'Voice2Text' https://drive.google.com/file/d/1MmF6Vr_3nz1yket2SdnHCI_Od5OpIzQd/view?usp=sharing
 
-### Linux (Flatpak)
+### Linux (Flatpak) (ToDo)
 ```bash
 # Install from Flathub (when available)
 flatpak install flathub com.voice2text.app
@@ -43,7 +43,7 @@ flatpak install flathub com.voice2text.app
 # Run: flatpak run com.voice2text.app
 ```
 
-### From Source
+### From Source (This might actually work)
 ```bash
 git clone https://github.com/crhy/Voice2Text-AI.git
 cd Voice2Text-AI
@@ -62,7 +62,7 @@ python test_whisper.py
 # Build executable
 pyinstaller voice_app.spec
 
-# Build Flatpak
+# Build Flatpak (This has never worked.  Yet)
 flatpak-builder --force-clean build com.voice2text.app.yml
 flatpak-builder --user --install build com.voice2text.app.yml
 
@@ -85,9 +85,9 @@ ollama pull llama3.2  # or any preferred model
 ## Usage
 
 ### Running the App
-- **Executable**: Double-click the downloaded file
+- **Executable**: Right Click, Select "Allow Executing File as Program", Double-click the downloaded file (wait, it's slow to load.  Once it's up it's crazy fast)
 - **From Source**: `python voice_app.py`
-- **Flatpak**: `flatpak run com.voice2text.app`
+- **Flatpak**: `flatpak run com.voice2text.app` (Good luck?)
 
 ### Quick Start
 1. Select your Ollama model from the dropdown
@@ -102,7 +102,7 @@ The app automatically saves your settings and provides real-time status updates.
 ## Notes
 
 - Whisper models run locally (internet required for initial download)
-- Google TTS requires internet for speech synthesis
+- Edge TTS provides local speech synthesis
 - GPU acceleration speeds up transcription significantly
 - Settings persist between sessions
 - App works offline after initial model downloads
