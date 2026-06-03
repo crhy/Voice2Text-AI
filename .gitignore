@@ -30,3 +30,4 @@ voice_config.local.json
 # Local runtime config
 config.json
 voice_config.json
+Voice2Text-AI.spec
