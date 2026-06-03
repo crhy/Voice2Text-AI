@@ -4,7 +4,6 @@ pyperclip
 PyAudio
 scipy
 requests
-gTTS
 pygame
 pillow
 edge-tts

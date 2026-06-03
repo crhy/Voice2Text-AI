@@ -27,10 +27,11 @@ import json
 import pyaudio
 import numpy as np
 import tempfile
+import subprocess
+import shutil
 from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 import requests
-from gtts import gTTS
 import pygame
 import asyncio
 import edge_tts
@@ -661,71 +662,107 @@ class VoiceApp:
                 self.update_status(f"AI error: {str(e)[:50]}", "red")
 
     def speak_with_tts(self, text):
-        """Speak text with edge-tts or fallback to gTTS."""
-        if not text or not text.strip():
+        """Speak text with Edge TTS or offline eSpeak NG fallback."""
+        if not text.strip():
             self.update_status("No text to speak", "orange")
             return
+
         if not self.tts_available:
-            self.update_status("TTS output unavailable on this system", "orange")
+            self.update_status("TTS not available", "orange")
             return
 
-        # Limit text length for TTS
-        text = text.strip()
-        # Remove hashtags and asterisks for cleaner speech
-        text = text.replace('#', '').replace('*', '')
-        if len(text) > 5000:
-            text = text[:5000] + "..."
-            self.update_status("Speech truncated to 5000 characters", "orange")
+        temp_files = []
+        self.tts_playing = True
 
         try:
-            self.update_status("🔊 Generating speech...", "#00aa00")
-            self.tts_playing = True
-
-            # Calculate rate for edge-tts: map 100-300 to -50% to +50%
-            rate_percent = ((self.tts_rate - 180) / 120) * 50  # 180 is neutral
-            rate_str = f"{rate_percent:+.0f}%"
-
-            async def generate_speech():
-                try:
-                    voice = "en-US-AriaNeural"
-                    communicate = edge_tts.Communicate(text, voice, rate=rate_str)
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3', mode='w+b')
-                    temp_file.close()
-                    await communicate.save(temp_file.name)
-                    return temp_file.name
-                except Exception as e:
-                    raise e
-
-            temp_file_name = asyncio.run(generate_speech())
-            pygame.mixer.music.load(temp_file_name)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy() and self.tts_playing:
-                pygame.time.wait(100)
-            pygame.mixer.music.stop()
-            os.unlink(temp_file_name)
-            self.update_status("Speech completed", "#00aa00")
-
-        except Exception as e:
-            # Fallback to gTTS
+            # First choice: Edge TTS.
             try:
-                self.update_status("Edge TTS failed, using gTTS...", "orange")
-                tts = gTTS(text=text, lang='en', slow=False, tld='co.uk')
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3', mode='w+b')
+                self.update_status("Generating speech...", "#0066cc")
+
+                # Map app slider 100-300 to Edge's -50% to +50%.
+                rate_percent = ((self.tts_rate - 180) / 120) * 50
+                rate_percent = max(-50, min(50, rate_percent))
+                rate_str = f"{rate_percent:+.0f}%"
+
+                voice = "en-US-AriaNeural"
+
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", mode="w+b")
+                temp_file_name = temp_file.name
                 temp_file.close()
-                tts.save(temp_file.name)
-                pygame.mixer.music.load(temp_file.name)
+                temp_files.append(temp_file_name)
+
+                async def save_edge_tts():
+                    communicate = edge_tts.Communicate(text, voice, rate=rate_str)
+                    await communicate.save(temp_file_name)
+
+                asyncio.run(save_edge_tts())
+
+                pygame.mixer.music.load(temp_file_name)
                 pygame.mixer.music.play()
+
                 while pygame.mixer.music.get_busy() and self.tts_playing:
                     pygame.time.wait(100)
+
                 pygame.mixer.music.stop()
-                os.unlink(temp_file.name)
-                self.update_status("Speech completed (gTTS)", "#00aa00")
-            except Exception as e2:
-                error_msg = f"TTS error: {str(e)[:30]}, gTTS: {str(e2)[:30]}"
-                self.update_status(error_msg, "red")
+
+                if self.tts_playing:
+                    self.update_status("Speech completed", "#00aa00")
+                return
+
+            except Exception as edge_error:
+                # Offline open-source fallback: eSpeak NG.
+                try:
+                    if not shutil.which("espeak-ng"):
+                        raise FileNotFoundError("espeak-ng is not installed")
+
+                    self.update_status("Edge TTS failed, using offline eSpeak NG...", "orange")
+
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav", mode="w+b")
+                    temp_file_name = temp_file.name
+                    temp_file.close()
+                    temp_files.append(temp_file_name)
+
+                    subprocess.run(
+                        [
+                            "espeak-ng",
+                            "-s",
+                            str(int(self.tts_rate)),
+                            "-w",
+                            temp_file_name,
+                            text,
+                        ],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+
+                    pygame.mixer.music.load(temp_file_name)
+                    pygame.mixer.music.play()
+
+                    while pygame.mixer.music.get_busy() and self.tts_playing:
+                        pygame.time.wait(100)
+
+                    pygame.mixer.music.stop()
+
+                    if self.tts_playing:
+                        self.update_status("Speech completed (eSpeak NG)", "#00aa00")
+
+                except Exception as espeak_error:
+                    error_msg = (
+                        f"TTS error: Edge: {str(edge_error)[:30]}, "
+                        f"eSpeak NG: {str(espeak_error)[:30]}"
+                    )
+                    self.update_status(error_msg, "orange")
+
         finally:
             self.tts_playing = False
-            self.queue.put(("update_status", "Ready", "white"))
+
+            with contextlib.suppress(Exception):
+                pygame.mixer.music.unload()
+
+            for temp_file_name in temp_files:
+                with contextlib.suppress(Exception):
+                    os.unlink(temp_file_name)
 
     def stop_tts(self):
         if self.is_listening:
