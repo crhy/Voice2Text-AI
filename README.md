@@ -26,22 +26,16 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 
 ## Installation
 
-### Pre-built Executables
+### Pre-built Executable v0.3.1
+Coming Soon
+
+### Pre-built Executables Version 0.2.0
 Download the latest release from [GitHub Releases](https://github.com/crhy/Voice2Text-AI/releases):
 - **Windows**: `Voice2Text.exe` Untested
 - **macOS**: `Voice2Text` Untested
 - **Linux**: 'Voice2Text' https://drive.google.com/file/d/1MmF6Vr_3nz1yket2SdnHCI_Od5OpIzQd/view?usp=sharing
 
-### Linux (Flatpak) (ToDo)
-```bash
-# Install from Flathub (when available)
-flatpak install flathub com.voice2text.app
-
-# Or download from GitHub Releases
-# Download: voice2text.flatpak from latest release
-# Install: flatpak install --user voice2text.flatpak
-# Run: flatpak run com.voice2text.app
-```
+### Linux (Flatpak) v0.3.1
 
 ### From Source (This might actually work)
 ```bash
