@@ -4,69 +4,117 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-tk
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+      - name: Lint critical syntax/import issues
+        run: ruff check . --select E9,F63,F7,F82
+      - name: Compile Python files
+        run: python -m py_compile *.py
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-tk
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build executable
+        run: pyinstaller voice_app.spec
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Voice2Text-Linux
+          path: dist/Voice2Text
+
   build-windows:
+    needs: test
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-    - name: Build executable
-      run: pyinstaller voice_app.spec
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Voice2Text-Windows
-        path: dist/Voice2Text.exe
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build executable
+        run: pyinstaller voice_app.spec
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Voice2Text-Windows
+          path: dist/Voice2Text.exe
 
   build-macos:
+    needs: test
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'
-    - name: Install PortAudio
-      run: brew install portaudio
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-    - name: Build executable
-      run: pyinstaller voice_app.spec
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Voice2Text-macOS
-        path: dist/Voice2Text
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PortAudio
+        run: brew install portaudio
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build executable
+        run: pyinstaller voice_app.spec
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Voice2Text-macOS
+          path: dist/Voice2Text
 
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-    - uses: actions/checkout@v4
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        files: |
-          Voice2Text-Windows/Voice2Text.exe
-          Voice2Text-macOS/Voice2Text
-          install.sh
-        draft: false
-        prerelease: false
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            Voice2Text-Linux/Voice2Text
+            Voice2Text-Windows/Voice2Text.exe
+            Voice2Text-macOS/Voice2Text
+            install.sh
+          draft: true
+          prerelease: false

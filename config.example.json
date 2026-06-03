@@ -1,0 +1,6 @@
+{
+  "input_device": "",
+  "output_device": "",
+  "model": "llama3.2",
+  "recognizer": "faster-whisper"
+}

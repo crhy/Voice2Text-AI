@@ -7,14 +7,19 @@ Features a simple interface with start/stop buttons and automatic clipboard copy
 """
 
 import os
+import sys
+import contextlib
+import math
 
-# Disable Jack audio to prevent errors
-os.environ['JACK_NO_START_SERVER'] = '1'
-os.environ['SDL_AUDIODRIVER'] = 'alsa'
-os.environ['ALSA_NO_JACK'] = '1'
+# Linux-only audio environment tweaks. Do not force ALSA on Windows/macOS.
+if sys.platform.startswith('linux'):
+    os.environ.setdefault('JACK_NO_START_SERVER', '1')
+    os.environ.setdefault('SDL_AUDIODRIVER', 'alsa')
+    os.environ.setdefault('ALSA_NO_JACK', '1')
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
+import tkinter.font as tkfont
 import pyperclip
 import threading
 import time
@@ -22,9 +27,8 @@ import json
 import pyaudio
 import numpy as np
 import tempfile
-import wave
 from faster_whisper import WhisperModel
-from scipy.signal import resample
+from scipy.signal import resample_poly
 import torch
 import requests
 from gtts import gTTS
@@ -51,19 +55,25 @@ class GuiTqdm(tqdm):
 class VoiceApp:
     def __init__(self, root):
         self.root = root
+        self._main_thread_id = threading.get_ident()
         self.root.title("Voice 2 Text")
         self.root.geometry("900x800")
         self.root.configure(bg='black')
         self.root.resizable(True, True)
 
+        # Queue for thread-safe GUI updates. Create it before any worker thread.
+        self.queue = queue.Queue()
+        self.shutdown_event = threading.Event()
+        self.model_lock = threading.Lock()
+        self.audio_lock = threading.Lock()
+        self.audio_queue = queue.Queue(maxsize=256)
+        self.model = None
+        self.sample_rate = 16000
+
         # Create canvas with gradient background
         self.canvas = tk.Canvas(self.root, width=900, height=800, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
-
-        # Bind resize event
         self.canvas.bind('<Configure>', self.on_canvas_resize)
-
-        # Create initial gradient
         self.create_gradient(900, 800)
 
         # Config
@@ -73,10 +83,17 @@ class VoiceApp:
 
         # TTS settings
         self.tts_rate = self.config.get('tts_rate', 180)
+        self.tts_available = False
 
         # Audio devices
-        self.audio = pyaudio.PyAudio()
-        self.microphones = self.get_microphones()
+        self.audio = None
+        try:
+            self.audio = pyaudio.PyAudio()
+            self.microphones = self.get_microphones()
+        except Exception as e:
+            print(f"Audio initialization failed: {e}")
+            self.microphones = []
+
         self.selected_mic_index = 0
         self.selected_mic_name = self.config.get('microphone_name', '')
 
@@ -101,47 +118,46 @@ class VoiceApp:
         # Whisper models
         self.whisper_models = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
         self.selected_whisper_model = self.config.get('whisper_model', 'tiny')
-        # Model sizes in MB and estimated download times in minutes (assuming 1 MB/s)
         self.model_info = {
             "tiny": {"size": 39, "eta": 1},
             "base": {"size": 74, "eta": 1},
             "small": {"size": 244, "eta": 4},
             "medium": {"size": 769, "eta": 13},
             "large-v2": {"size": 1550, "eta": 26},
-            "large-v3": {"size": 1550, "eta": 26}
+            "large-v3": {"size": 1550, "eta": 26},
         }
 
-        # Speech recognition with Faster Whisper
-        threading.Thread(target=self.load_whisper_model, daemon=True).start()
-
-        # Text-to-speech engine
-        pygame.mixer.init()
+        # Text-to-speech engine. Some systems have no output device; the app should still open.
+        try:
+            pygame.mixer.init()
+            self.tts_available = True
+        except Exception as e:
+            print(f"TTS audio output initialization failed: {e}")
         self.tts_playing = False
 
-        # Queue for thread-safe GUI updates
-        self.queue = queue.Queue()
+        # Audio buffering
+        self.max_audio_frames = 256
 
-        # Performance and memory optimization
-        self.audio_frames = []  # Limit memory usage
-        self.max_audio_frames = 1000  # Prevent excessive memory usage
-
-        # Ollama models
+        # Ollama models. Keep timeout short so app startup is not blocked for long.
         self.ollama_models = self.get_ollama_models()
-        self.selected_model = self.config.get('selected_model', "llama3.2" if "llama3.2" in self.ollama_models else (self.ollama_models[0] if self.ollama_models else "llama3.2"))
-        # Ensure selected model is valid
+        self.selected_model = self.config.get(
+            'selected_model',
+            "llama3.2" if "llama3.2" in self.ollama_models else (self.ollama_models[0] if self.ollama_models else "llama3.2"),
+        )
         if self.ollama_models and self.selected_model not in self.ollama_models:
             self.selected_model = self.ollama_models[0]
+
         self.is_listening = False
         self.current_text = ""
         self.audio_stream = None
 
-        # Create GUI
+        # Create GUI before background workers that update widgets.
         self.create_gui()
-
         self.process_queue()
-
-        # Bind close event
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Load Whisper after widgets exist.
+        threading.Thread(target=self.load_whisper_model, daemon=True).start()
 
     def update_time(self):
         current_time = datetime.datetime.now().strftime("%I:%M:%S %p")
@@ -152,29 +168,36 @@ class VoiceApp:
         try:
             while True:
                 msg = self.queue.get_nowait()
-                if msg[0] == "update_status":
+                kind = msg[0]
+                if kind == "update_status":
                     self.update_status(msg[1], msg[2])
-                elif msg[0] == "update_transcript":
-                    self.text_area.insert(tk.END, f"{msg[1]}\n")
-                    self.text_area.see(tk.END)
-                    self.root.update_idletasks()
-                elif msg[0] == "show_error":
+                elif kind == "update_transcript":
+                    self.update_transcript(msg[1])
+                elif kind == "show_error":
                     messagebox.showerror("Error", msg[1])
-                elif msg[0] == "clear_ai":
+                elif kind == "clear_ai":
                     self.ai_text_area.delete(1.0, tk.END)
-                elif msg[0] == "insert_ai":
+                elif kind == "insert_ai":
                     self.ai_text_area.insert(tk.END, msg[1])
-
-                elif msg[0] == "stop_dictation":
+                elif kind == "stop_dictation":
                     self.stop_dictation()
+                elif kind == "progress":
+                    self.progress_bar.config(value=msg[1])
+                elif kind == "ui_call":
+                    func, args, kwargs = msg[1], msg[2], msg[3]
+                    func(*args, **kwargs)
         except queue.Empty:
             pass
-        self.root.after(100, self.process_queue)
+        if not self.shutdown_event.is_set():
+            self.root.after(100, self.process_queue)
+
+    def post_ui_call(self, func, *args, **kwargs):
+        self.queue.put(("ui_call", func, args, kwargs))
 
     def get_ollama_models(self):
         """Get available Ollama models with improved error handling."""
         try:
-            response = requests.get('http://localhost:11434/api/tags', timeout=5)
+            response = requests.get('http://localhost:11434/api/tags', timeout=1.5)
             response.raise_for_status()  # Raise exception for bad status codes
             data = response.json()
             return [model['name'] for model in data.get('models', [])]
@@ -218,20 +241,34 @@ class VoiceApp:
             print(f"Error saving config: {e}")
 
     def on_close(self):
+        self.shutdown_event.set()
+        self.is_listening = False
+        self.tts_playing = False
         self.save_config()
-        self.audio.terminate()
+        if self.audio_stream:
+            with contextlib.suppress(Exception):
+                self.audio_stream.stop_stream()
+            with contextlib.suppress(Exception):
+                self.audio_stream.close()
+            self.audio_stream = None
+        if self.audio:
+            with contextlib.suppress(Exception):
+                self.audio.terminate()
+        if self.tts_available:
+            with contextlib.suppress(Exception):
+                pygame.mixer.music.stop()
+            with contextlib.suppress(Exception):
+                pygame.mixer.quit()
         self.root.destroy()
 
     def create_gradient(self, width, height):
-        color1 = (0, 0, 0)
-        color2 = (0, 0, 51)
-        img = Image.new('RGB', (width, height), color1)
-        for y in range(height):
-            r = int(color1[0] + (color2[0] - color1[0]) * y / height)
-            g = int(color1[1] + (color2[1] - color1[1]) * y / height)
-            b = int(color1[2] + (color2[2] - color1[2]) * y / height)
-            for x in range(width):
-                img.putpixel((x, y), (r, g, b))
+        """Draw the background gradient without per-pixel Python loops."""
+        width = max(1, int(width))
+        height = max(1, int(height))
+        blue = np.linspace(0, 51, height, dtype=np.uint8)[:, None]
+        img_array = np.zeros((height, width, 3), dtype=np.uint8)
+        img_array[:, :, 2] = blue
+        img = Image.fromarray(img_array, 'RGB')
         self.bg_photo = ImageTk.PhotoImage(img)
         self.canvas.delete("gradient")
         self.canvas.create_image(0, 0, anchor='nw', image=self.bg_photo, tags="gradient")
@@ -243,11 +280,16 @@ class VoiceApp:
 
     def get_microphones(self):
         microphones = []
-        for i in range(self.audio.get_device_count()):
-            info = self.audio.get_device_info_by_index(i)
-            max_input = info.get('maxInputChannels', 0)
-            if isinstance(max_input, (int, float)) and max_input > 0:
-                microphones.append(f"{info.get('name')} (Index: {i})")
+        if not self.audio:
+            return microphones
+        try:
+            for i in range(self.audio.get_device_count()):
+                info = self.audio.get_device_info_by_index(i)
+                max_input = info.get('maxInputChannels', 0)
+                if isinstance(max_input, (int, float)) and max_input > 0:
+                    microphones.append(f"{info.get('name')} (Index: {i})")
+        except Exception as e:
+            print(f"Could not enumerate microphones: {e}")
         return microphones
 
     def get_mic_device_index(self, mic_string):
@@ -256,120 +298,87 @@ class VoiceApp:
         return int(match.group(1)) if match else 0
 
     def load_whisper_model(self):
-        """Load Whisper model with improved error handling and performance."""
-        info = self.model_info.get(self.selected_whisper_model, {"size": "unknown", "eta": "unknown"})
-        size = info["size"]
-        eta = info["eta"]
-        self.update_status(f"Loading Whisper model: {self.selected_whisper_model} ({size} MB) - estimated download time: {eta} min", "#ffaa00")
-        if isinstance(eta, int) and eta > 0:
-            self.root.after(0, lambda: self.progress_bar.config(mode='determinate', maximum=100, value=0))
-            # Start progress update
-            total_time = eta * 60  # seconds
-            step = 100 / total_time
-            def update_progress():
-                current = self.progress_bar['value']
-                if current < 100:
-                    self.progress_bar['value'] = min(100, current + step)
-                    self.root.after(1000, update_progress)
-            self.root.after(1000, update_progress)
-        else:
-            self.root.after(0, lambda: self.progress_bar.config(mode='indeterminate'))
-            self.root.after(0, lambda: self.progress_bar.start())
+        """Load Whisper model with clearer fallback and UI-thread-safe updates."""
+        model_name = self.selected_whisper_model
+        info = self.model_info.get(model_name, {"size": "unknown", "eta": "unknown"})
+        self.update_status(
+            f"Loading Whisper model: {model_name} ({info['size']} MB) - estimated download time: {info['eta']} min",
+            "#ffaa00",
+        )
+        self.post_ui_call(self.progress_bar.config, mode='indeterminate')
+        self.post_ui_call(self.progress_bar.start)
 
-        # Determine optimal device and compute type
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute_type = "int8"
+        attempts = [(device, "int8")]
+        if device == "cuda":
+            attempts.append(("cpu", "int8"))
 
-        try:
-            self.model = WhisperModel(
-                self.selected_whisper_model,
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=1 if device == "cuda" else 4
-            )
-            self.update_status("Whisper model loaded successfully!", "#00aa00")
-            self.root.after(0, lambda: self.progress_bar.config(value=100))
-            self.root.after(0, lambda: self.loaded_label.config(text=f"Loaded: {self.selected_whisper_model}"))
+        last_error = None
+        for attempt_device, compute_type in attempts:
+            try:
+                if attempt_device == "cpu" and device == "cuda":
+                    self.update_status("CUDA failed, falling back to CPU...", "#ffaa00")
+                model = WhisperModel(
+                    model_name,
+                    device=attempt_device,
+                    compute_type=compute_type,
+                    cpu_threads=1 if attempt_device == "cuda" else max(1, min(4, (os.cpu_count() or 4))),
+                )
+                with self.model_lock:
+                    # Ignore stale loads after the user changes the dropdown.
+                    if model_name != self.selected_whisper_model:
+                        return
+                    self.model = model
+                self.post_ui_call(self.progress_bar.stop)
+                self.post_ui_call(self.progress_bar.config, mode='determinate', value=100)
+                self.post_ui_call(self.loaded_label.config, text=f"Loaded: {model_name}")
+                suffix = "on CPU" if attempt_device == "cpu" else "successfully"
+                self.update_status(f"Whisper model loaded {suffix}!", "#00aa00")
+                return
+            except Exception as e:
+                last_error = e
 
-        except Exception as e:
-            loaded = False
-            if device == "cuda":
-                self.update_status("CUDA failed, falling back to CPU...", "#ffaa00")
-                try:
-                    device = "cpu"
-                    compute_type = "int8"
-                    self.model = WhisperModel(
-                        self.selected_whisper_model,
-                        device=device,
-                        compute_type=compute_type,
-                        cpu_threads=4
-                    )
-                    self.update_status("Whisper model loaded on CPU!", "#00aa00")
-                    self.root.after(0, lambda: self.progress_bar.config(value=100))
-                    self.root.after(0, lambda: self.loaded_label.config(text=f"Loaded: {self.selected_whisper_model}"))
-                    loaded = True
-                except Exception as e2:
-                    error_msg = f"Failed to load Whisper model on CPU: {str(e2)[:100]}"
-                    self.update_status(error_msg, "red")
-                    self.root.after(0, lambda: self.progress_bar.config(value=0))
-                    self.model = None
-                    self.root.after(0, lambda: self.loaded_label.config(text="Loaded: Failed"))
-            if not loaded:
-                error_msg = f"Failed to load Whisper model: {str(e)[:100]}"
-                self.update_status(error_msg, "red")
-                self.root.after(0, lambda: self.progress_bar.stop())
-                self.model = None
-                self.root.after(0, lambda: self.loaded_label.config(text="Loaded: Failed"))
-                error_msg = f"Failed to load Whisper model: {str(e)[:100]}"
-                self.update_status(error_msg, "red")
-                self.root.after(0, lambda: self.progress_bar.stop())
-                self.model = None
-                self.root.after(0, lambda: self.loaded_label.config(text="Loaded: Failed"))
-                error_msg = f"Failed to load Whisper model: {str(e)[:100]}"
-                self.update_status(error_msg, "red")
-                self.root.after(0, lambda: self.progress_bar.stop())
-                self.model = None
-                self.root.after(0, lambda: self.loaded_label.config(text="Loaded: Failed"))
-
-        except Exception as e:
-            error_msg = f"Unexpected error loading Whisper model: {str(e)[:100]}"
-            self.update_status(error_msg, "red")
-            self.root.after(0, lambda: self.progress_bar.stop())
+        with self.model_lock:
             self.model = None
-            self.root.after(0, lambda: self.loaded_label.config(text="Loaded: Failed"))
+        self.post_ui_call(self.progress_bar.stop)
+        self.post_ui_call(self.progress_bar.config, value=0)
+        self.post_ui_call(self.loaded_label.config, text="Loaded: Failed")
+        self.update_status(f"Failed to load Whisper model: {str(last_error)[:120]}", "red")
 
     def audio_callback(self, in_data, frame_count, time_info, status):
-        """Callback for audio stream with memory management"""
+        """PyAudio callback: enqueue bytes only; never do heavy work here."""
         if self.is_listening:
-            self.audio_frames.append(in_data)
-            # Prevent excessive memory usage by limiting frame buffer
-            if len(self.audio_frames) > self.max_audio_frames:
-                # Remove oldest frames to maintain buffer size
-                remove_count = len(self.audio_frames) - self.max_audio_frames
-                self.audio_frames = self.audio_frames[remove_count:]
+            try:
+                self.audio_queue.put_nowait(in_data)
+            except queue.Full:
+                # Drop the oldest frame to keep latency bounded instead of growing memory.
+                with contextlib.suppress(queue.Empty):
+                    self.audio_queue.get_nowait()
+                with contextlib.suppress(queue.Full):
+                    self.audio_queue.put_nowait(in_data)
         return (in_data, pyaudio.paContinue)
 
     def create_gui(self):
         # Style
         style = ttk.Style()
         style.configure('TFrame', background='#000022')
-        style.configure('TButton', font=('Helvetica', 12), padding=10, background='#000022', foreground='white')
-        style.configure('TLabel', font=('Helvetica', 10), background='#000000', foreground='white')
-        style.configure('TCombobox', font=('Helvetica', 10), fieldbackground='white', foreground='black', selectbackground='#000055', selectforeground='white')
+        style.configure('TButton', font=('nimbus sans l', 13), padding=10, background='#000022', foreground='white')
+        style.configure('TLabel', font=('nimbus sans l', 11), background='#000000', foreground='white')
+        style.configure('TCombobox', font=('nimbus sans l', 11), fieldbackground='white', foreground='black', selectbackground='#000055', selectforeground='white')
         style.configure('TCombobox.Listbox', background='#000022', foreground='white', selectbackground='#000055', selectforeground='white')
         style.configure('Vertical.TScrollbar', background='#000022', troughcolor='#000022', arrowcolor='white', bordercolor='#000022')
         style.configure('TProgressbar', background='#00aa00', troughcolor='#000033', bordercolor='#000033')
 
         # Title
-        title_label = tk.Label(self.root, text="Voice 2 Text", font=('Arial Black', 26, 'bold'), bg='black', fg='white')
+        title_label = tk.Label(self.root, text="Voice 2 Text", font=('nimbus sans l', 30, 'bold'), bg='black', fg='white')
         self.canvas.create_window(450, 50, window=title_label)
 
         # Version
-        version_label = tk.Label(self.root, text="v0.02", font=('Helvetica', 8), bg='#000000', fg='white')
+        version_label = tk.Label(self.root, text="v0.02", font=('nimbus sans l', 9), bg='#000000', fg='white')
         self.canvas.create_window(850, 20, window=version_label)
 
         # Time
-        self.time_label = tk.Label(self.root, text="", font=('Helvetica', 10), bg='#000000', fg='white')
+        self.time_label = tk.Label(self.root, text="", font=('nimbus sans l', 11), bg='#000000', fg='white')
         self.canvas.create_window(850, 40, window=self.time_label)
         self.update_time()
 
@@ -377,21 +386,21 @@ class VoiceApp:
         whisper_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 610, window=whisper_frame)
 
-        tk.Label(whisper_frame, text="Whisper Model:", bg='#000022', fg='white', font=('Arial', 12, 'bold')).pack(side='left')
+        tk.Label(whisper_frame, text="Whisper Model:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
         self.whisper_combo = ttk.Combobox(whisper_frame, textvariable=self.whisper_var, values=self.whisper_models, state='readonly', width=40)
         self.whisper_combo.pack(side='left', padx=(10, 0))
         self.whisper_var.set(self.selected_whisper_model)
         self.whisper_combo.bind('<<ComboboxSelected>>', self.on_whisper_change)
 
         # Loaded model indicator
-        self.loaded_label = tk.Label(whisper_frame, text="Loaded: None", bg='#000010', fg='white', font=('Helvetica', 8))
+        self.loaded_label = tk.Label(whisper_frame, text="Loaded: None", bg='#000010', fg='white', font=('nimbus sans l', 9))
         self.loaded_label.pack(side='left', padx=(10, 0))
 
         # Microphone selection
         mic_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 650, window=mic_frame)
 
-        tk.Label(mic_frame, text="Microphone:", bg='#000022', fg='white', font=('Arial', 12, 'bold')).pack(side='left')
+        tk.Label(mic_frame, text="Microphone:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
         mic_values = self.microphones if self.microphones else ["No microphone detected"]
         self.mic_combo = ttk.Combobox(mic_frame, textvariable=self.mic_var, values=mic_values, state='readonly', width=40)
         self.mic_combo.pack(side='left', padx=(10, 0))
@@ -401,7 +410,7 @@ class VoiceApp:
         model_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 690, window=model_frame)
 
-        tk.Label(model_frame, text="AI Model:", bg='#000022', fg='white', font=('Arial', 12, 'bold')).pack(side='left')
+        tk.Label(model_frame, text="AI Model:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
         model_values = self.ollama_models if self.ollama_models else ["Ollama not running"]
         self.model_combo = ttk.Combobox(model_frame, textvariable=self.model_var, values=model_values, state='readonly', width=40)
         self.model_combo.pack(side='left', padx=(10, 0))
@@ -409,10 +418,10 @@ class VoiceApp:
             self.model_var.set(self.selected_model)
         else:
             self.model_var.set("Ollama not running")
-        self.model_var.trace('w', self.on_model_change)
+        self.model_var.trace_add('write', self.on_model_change)
 
         # Status label with loading indicator
-        self.status_label = tk.Label(self.root, text="Ready", font=('Helvetica', 12, 'bold'), bg='#000033', fg='yellow')
+        self.status_label = tk.Label(self.root, text="Ready", font=('nimbus sans l', 13, 'bold'), bg='#000033', fg='yellow')
         self.canvas.create_window(450, 110, window=self.status_label)
 
         # Progress bar for model download
@@ -423,27 +432,27 @@ class VoiceApp:
         text_frame = ttk.Frame(self.root)
         self.canvas.create_window(250, 290, window=text_frame)
 
-        tk.Label(text_frame, text="Transcribed Text:", bg='black', fg='white', font=('Helvetica', 10, 'bold')).pack(fill='x')
+        tk.Label(text_frame, text="Transcribed Text:", bg='black', fg='white', font=('nimbus sans l', 11, 'bold')).pack(fill='x')
         self.text_area = scrolledtext.ScrolledText(text_frame, height=15, width=35, wrap=tk.WORD,
                                                     bg='black', fg='white', insertbackground='white',
-                                                    font=('Consolas', 10), borderwidth=0, relief='flat')
+                                                    font=('nimbus sans l', 12), borderwidth=0, relief='flat')
         self.text_area.pack(fill='x', expand=False)
 
         # AI Response area
         ai_frame = ttk.Frame(self.root)
         self.canvas.create_window(650, 290, window=ai_frame)
 
-        tk.Label(ai_frame, text="AI Response:", bg='black', fg='white', font=('Helvetica', 10, 'bold')).pack(fill='x')
+        tk.Label(ai_frame, text="AI Response:", bg='black', fg='white', font=('nimbus sans l', 11, 'bold')).pack(fill='x')
         self.ai_text_area = scrolledtext.ScrolledText(ai_frame, height=15, width=35, wrap=tk.WORD,
                                                        bg='black', fg='white', insertbackground='white',
-                                                       font=('Consolas', 10), borderwidth=0, relief='flat')
+                                                       font=('nimbus sans l', 12), borderwidth=0, relief='flat')
         self.ai_text_area.pack(fill='x', expand=False)
 
         # TTS Controls
         tts_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 570, window=tts_frame)
 
-        tk.Label(tts_frame, text="TTS Speed:", bg='#000022', fg='white', font=('Arial', 12, 'bold')).pack(side='left')
+        tk.Label(tts_frame, text="TTS Speed:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
         self.tts_scale = tk.Scale(tts_frame, from_=100, to=300, orient='horizontal', bg='#000022', fg='white', troughcolor='#000055', highlightbackground='#000022')
         self.tts_scale.set(self.tts_rate)
         self.tts_scale.pack(side='left', padx=(10, 0))
@@ -493,7 +502,8 @@ class VoiceApp:
         self.selected_whisper_model = self.whisper_var.get()
         if self.selected_whisper_model != old_model:
             self.save_config()
-            self.model = None  # Free old model
+            with self.model_lock:
+                self.model = None  # Free old model
             self.loaded_label.config(text="Loaded: None")
             self.update_status(f"Loading Whisper model: {self.selected_whisper_model}...", "#ffaa00")
             threading.Thread(target=self.load_whisper_model, daemon=True).start()
@@ -503,7 +513,10 @@ class VoiceApp:
         self.save_config()
 
     def update_status(self, message, color='gray', progress_text=""):
-        """Update status with optional progress indicator."""
+        """Update status from any thread without touching Tk widgets off-thread."""
+        if threading.get_ident() != getattr(self, '_main_thread_id', None):
+            self.queue.put(("update_status", message, color))
+            return
         if hasattr(self, 'status_label'):
             self.status_label.config(text=message, fg=color)
             self.root.update_idletasks()
@@ -518,9 +531,19 @@ class VoiceApp:
         if not self.microphones:
             messagebox.showerror("Error", "No microphones found!")
             return
+        with self.model_lock:
+            model_ready = self.model is not None
+        if not model_ready:
+            self.update_status("Whisper model is still loading; try again shortly", "orange")
+            return
 
         self.is_listening = True
         self.current_text = ""
+        while True:
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
         self.text_area.delete(1.0, tk.END)
         self.text_area.insert(tk.END, "🎙️ Listening... Speak now!\n\n")
 
@@ -535,13 +558,13 @@ class VoiceApp:
         self.dictation_button.config(text="🎙️ Start Dictation")
 
         if self.current_text.strip():
-            pyperclip.copy(self.current_text.strip())
-            self.update_status("📋 Text copied to clipboard!", "#0066cc")
+            try:
+                pyperclip.copy(self.current_text.strip())
+                self.update_status("📋 Text copied to clipboard!", "#0066cc")
+            except Exception as e:
+                self.update_status(f"Dictation stopped; clipboard unavailable: {str(e)[:50]}", "orange")
         else:
             self.update_status("Ready", "black")
-
-        # Small delay to ensure audio stream is fully closed
-        time.sleep(0.1)
 
     def copy_text(self):
         if self.is_listening:
@@ -573,14 +596,15 @@ class VoiceApp:
             self.update_status("No text to send to AI", "orange")
             return
 
-        # Check if Ollama is running
         if not self.ollama_models:
-            self.update_status("Ollama not running - start with 'ollama serve'", "red")
-            return
+            # Try one quick refresh in case Ollama started after the GUI opened.
+            self.ollama_models = self.get_ollama_models()
+            if not self.ollama_models:
+                self.update_status("Ollama not running - start with 'ollama serve'", "red")
+                return
 
-        # Sanitize input
         user_text = user_text.strip()
-        if len(user_text) > 10000:  # Limit input size
+        if len(user_text) > 10000:
             user_text = user_text[:10000] + "..."
             self.update_status("Input truncated to 10,000 characters", "orange")
 
@@ -589,46 +613,46 @@ class VoiceApp:
             try:
                 self.update_status(f"🤖 Querying AI... (attempt {attempt + 1}/{max_retries})", "#ffaa00")
 
-                # Query Ollama with reasonable timeout
-                response = requests.post('http://localhost:11434/api/generate',
-                                        json={
-                                            "model": self.selected_model,
-                                            "prompt": user_text,
-                                            "stream": False
-                                        },
-                                        timeout=120)  # Increased timeout for slower models
+                response = requests.post(
+                    'http://localhost:11434/api/generate',
+                    json={
+                        "model": self.selected_model,
+                        "prompt": user_text,
+                        "stream": False,
+                        "options": {"num_predict": 512},
+                    },
+                    timeout=(5, 120),
+                )
 
                 response.raise_for_status()
                 ai_response = response.json().get('response', '').strip()
 
-                if ai_response:
-                    # Display AI response
-                    self.queue.put(("clear_ai",))
-                    self.queue.put(("insert_ai", ai_response))
-
-                    # Speak the response with TTS
-                    self.update_status("🎵 Generating speech...", "#00aa00")
-                    self.speak_with_tts(ai_response)
-                    self.update_status("🤖 AI responded successfully!", "#00aa00")
-                    return  # Success, exit function
+                if not ai_response:
                     self.update_status("AI gave empty response", "orange")
                     return
+
+                self.queue.put(("clear_ai",))
+                self.queue.put(("insert_ai", ai_response))
+                self.update_status("🎵 Generating speech...", "#00aa00")
+                self.speak_with_tts(ai_response)
+                self.update_status("🤖 AI responded successfully!", "#00aa00")
+                return
 
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
                     self.update_status(f"AI timeout, retrying... ({attempt + 1}/{max_retries})", "orange")
-                    time.sleep(2)  # Wait before retry
+                    time.sleep(2)
                     continue
-                    self.update_status("AI timeout - model may be slow or overloaded", "red")
+                self.update_status("AI timeout - model may be slow or overloaded", "red")
 
             except requests.exceptions.ConnectionError:
                 self.update_status("Cannot connect to Ollama - check if running", "red")
-                break  # Don't retry connection errors
+                break
 
             except requests.exceptions.HTTPError as e:
                 status_code = e.response.status_code if e.response else "unknown"
                 self.update_status(f"Ollama HTTP error {status_code}: {str(e)[:50]}", "red")
-                break  # Don't retry HTTP errors
+                break
 
             except (KeyError, ValueError) as e:
                 self.update_status(f"Invalid response from Ollama: {str(e)[:50]}", "red")
@@ -639,12 +663,15 @@ class VoiceApp:
                     self.update_status(f"AI error, retrying... ({attempt + 1}/{max_retries})", "orange")
                     time.sleep(1)
                     continue
-                    self.update_status(f"AI error: {str(e)[:50]}", "red")
+                self.update_status(f"AI error: {str(e)[:50]}", "red")
 
     def speak_with_tts(self, text):
         """Speak text with edge-tts or fallback to gTTS."""
         if not text or not text.strip():
             self.update_status("No text to speak", "orange")
+            return
+        if not self.tts_available:
+            self.update_status("TTS output unavailable on this system", "orange")
             return
 
         # Limit text length for TTS
@@ -709,7 +736,9 @@ class VoiceApp:
         if self.is_listening:
             self.stop_dictation()
         self.tts_playing = False
-        pygame.mixer.music.stop()
+        if self.tts_available:
+            with contextlib.suppress(Exception):
+                pygame.mixer.music.stop()
         self.update_status("TTS stopped", "orange")
 
     def clear_text(self):
@@ -720,13 +749,40 @@ class VoiceApp:
         self.current_text = ""
         self.update_status("Ready", "black")
 
+    def transcribe_audio(self, audio_data, sample_rate):
+        """Normalize/resample audio and pass a numpy array directly to Faster Whisper."""
+        if audio_data.size == 0:
+            return ""
+
+        if sample_rate != 16000:
+            divisor = math.gcd(sample_rate, 16000)
+            audio_data = resample_poly(audio_data, 16000 // divisor, sample_rate // divisor).astype(np.int16)
+
+        audio_float = audio_data.astype(np.float32) / 32768.0
+        with self.model_lock:
+            model = self.model
+        if model is None:
+            raise RuntimeError("Whisper model not loaded")
+
+        segments, _info = model.transcribe(
+            audio_float,
+            language="en",
+            beam_size=1,
+            vad_filter=True,
+            condition_on_previous_text=False,
+        )
+        return " ".join(segment.text for segment in segments).strip()
+
     def listen_loop(self):
         try:
-            device_index = self.get_mic_device_index(self.microphones[self.selected_mic_index])
+            if not self.audio:
+                self.queue.put(("update_status", "No audio input available", "red"))
+                self.queue.put(("stop_dictation",))
+                return
 
-            # Start audio stream - try different sample rates
-            self.audio_frames = []
-            sample_rates = [48000, 44100, 32000, 22050, 16000, 8000]  # Try common rates
+            device_index = self.get_mic_device_index(self.microphones[self.selected_mic_index])
+            sample_rates = [16000, 22050, 32000, 44100, 48000, 8000]
+            self.audio_stream = None
 
             for rate in sample_rates:
                 try:
@@ -737,133 +793,93 @@ class VoiceApp:
                         input=True,
                         input_device_index=device_index,
                         frames_per_buffer=1024,
-                        stream_callback=self.audio_callback
+                        stream_callback=self.audio_callback,
                     )
                     self.sample_rate = rate
                     break
                 except Exception as e:
                     print(f"Failed to open stream at {rate} Hz: {e}")
-                    continue
-                self.root.after(0, lambda: self.update_status("No audio device available - check microphone setup", "red"))
+
+            if self.audio_stream is None:
+                self.queue.put(("update_status", "No audio device available - check microphone setup", "red"))
+                self.queue.put(("stop_dictation",))
                 return
 
             self.audio_stream.start_stream()
             self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
 
-            processed_frames = 0
-            chunk_duration = 3  # Increased to 3 seconds for better accuracy and less CPU usage
-            silence_threshold = 500  # RMS threshold for silence detection
+            chunk_duration = 3.0
+            silence_threshold = 500
             consecutive_silent_chunks = 0
-            max_silent_chunks = 5  # Stop after 15 seconds of silence
+            max_silent_chunks = 5
+            pending_frames = []
+            next_process = time.monotonic() + chunk_duration
 
-            # Real-time transcription loop
-            while self.is_listening:
-                time.sleep(chunk_duration)
-
-                # Check if we have new frames to process
-                if len(self.audio_frames) > processed_frames:
-                    chunk_frames = self.audio_frames[processed_frames:]
-                    processed_frames = len(self.audio_frames)
-
-                    # Quick silence detection to avoid unnecessary processing
-                    if len(chunk_frames) > 0:
-                        try:
-                            audio_data = np.frombuffer(b''.join(chunk_frames), dtype=np.int16)
-                            rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
-
-                            if rms < silence_threshold:
-                                consecutive_silent_chunks += 1
-                                if consecutive_silent_chunks >= max_silent_chunks:
-                                    self.queue.put(("update_status", "Silence detected, stopping...", "#ffaa00"))
-                                    self.stop_dictation()
-                                    break
-                                consecutive_silent_chunks = 0
-                        except:
-                            pass  # Continue processing if RMS calculation fails
-
-                    # Process this chunk
-                    self.queue.put(("update_status", "🔍 Recognizing...", "#ffaa00"))
-                    try:
-                        # Convert chunk to numpy and resample (optimized)
-                        audio_data = np.frombuffer(b''.join(chunk_frames), dtype=np.int16)
-
-                        # Only resample if necessary and cache the resampled data
-                        if self.sample_rate != 16000:
-                            num_samples = len(audio_data)
-                            target_samples = int(num_samples * 16000 / self.sample_rate)
-                            audio_data = resample(audio_data, target_samples).astype(np.int16)
-
-                        # Save chunk to temp WAV
-                        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                            temp_filename = temp_file.name
-
-                            with wave.open(temp_filename, 'wb') as wf:
-                                wf.setnchannels(1)
-                                wf.setsampwidth(2)
-                                wf.setframerate(16000)
-                                wf.writeframes(audio_data.tobytes())
-
-                        # Transcribe chunk with error checking
-                        if self.model is None:
-                            raise RuntimeError("Whisper model not loaded")
-
-                        segments, info = self.model.transcribe(temp_filename, language="en")
-                        text = " ".join(segment.text for segment in segments).strip()
-
-                        os.unlink(temp_filename)
-
-                        if text:
-                            self.current_text += text + " "
-                            self.queue.put(("update_transcript", text))
-                            self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
-                            self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
-
-                    except Exception as e:
-                        self.queue.put(("update_transcript", f"[Error: {e}]"))
-                        self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
-
-            # Stop recording
-            if self.audio_stream:
-                self.audio_stream.stop_stream()
-                self.audio_stream.close()
-                self.audio_stream = None
-
-            # Process any remaining frames
-            if len(self.audio_frames) > processed_frames:
-                remaining_frames = self.audio_frames[processed_frames:]
-                self.queue.put(("update_status", "🔍 Finalizing...", "#ffaa00"))
+            while self.is_listening and not self.shutdown_event.is_set():
+                timeout = max(0.05, next_process - time.monotonic())
                 try:
-                    audio_data = np.frombuffer(b''.join(remaining_frames), dtype=np.int16)
-                    if self.sample_rate != 16000:
-                        num_samples = len(audio_data)
-                        target_samples = int(num_samples * 16000 / self.sample_rate)
-                        audio_data = resample(audio_data, target_samples).astype(np.int16)
+                    pending_frames.append(self.audio_queue.get(timeout=timeout))
+                except queue.Empty:
+                    pass
 
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                        temp_filename = temp_file.name
+                if time.monotonic() < next_process:
+                    continue
+                next_process = time.monotonic() + chunk_duration
 
-                        with wave.open(temp_filename, 'wb') as wf:
-                            wf.setnchannels(1)
-                            wf.setsampwidth(2)
-                            wf.setframerate(16000)
-                            wf.writeframes(audio_data.tobytes())
+                if not pending_frames:
+                    continue
 
-                    if self.model is None:
-                        raise RuntimeError("Whisper model not loaded")
+                chunk = b''.join(pending_frames)
+                pending_frames.clear()
+                audio_data = np.frombuffer(chunk, dtype=np.int16)
 
-                    segments, info = self.model.transcribe(temp_filename, language="en")
-                    text = " ".join(segment.text for segment in segments).strip()
+                if audio_data.size == 0:
+                    continue
 
-                    os.unlink(temp_filename)
+                try:
+                    rms = float(np.sqrt(np.mean(audio_data.astype(np.float32) ** 2)))
+                    if rms < silence_threshold:
+                        consecutive_silent_chunks += 1
+                        if consecutive_silent_chunks >= max_silent_chunks:
+                            self.queue.put(("update_status", "Silence detected, stopping...", "#ffaa00"))
+                            self.is_listening = False
+                            break
+                        continue
+                    consecutive_silent_chunks = 0
+                except Exception:
+                    pass
 
+                self.queue.put(("update_status", "🔍 Recognizing...", "#ffaa00"))
+                try:
+                    text = self.transcribe_audio(audio_data, self.sample_rate)
                     if text:
                         self.current_text += text + " "
                         self.queue.put(("update_transcript", text))
-
+                    self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
                 except Exception as e:
-                    self.root.after(0, self.update_transcript, f"[Error: {e}]")
+                    self.queue.put(("update_transcript", f"[Error: {e}]"))
+                    self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
 
-            self.root.after(0, lambda: self.update_status("Ready", "black"))
+            if pending_frames:
+                self.queue.put(("update_status", "🔍 Finalizing...", "#ffaa00"))
+                try:
+                    audio_data = np.frombuffer(b''.join(pending_frames), dtype=np.int16)
+                    text = self.transcribe_audio(audio_data, self.sample_rate)
+                    if text:
+                        self.current_text += text + " "
+                        self.queue.put(("update_transcript", text))
+                except Exception as e:
+                    self.queue.put(("update_transcript", f"[Error: {e}]"))
+
+            if self.audio_stream:
+                with contextlib.suppress(Exception):
+                    self.audio_stream.stop_stream()
+                with contextlib.suppress(Exception):
+                    self.audio_stream.close()
+                self.audio_stream = None
+
+            self.queue.put(("update_status", "Ready", "black"))
+            self.queue.put(("stop_dictation",))
 
         except Exception as e:
             self.queue.put(("show_error", f"Recognition error: {e}"))
@@ -877,6 +893,8 @@ class VoiceApp:
 def main():
     try:
         root = tk.Tk()
+        with contextlib.suppress(Exception):
+            root.tk.call('tk', 'scaling', 1.35)
         app = VoiceApp(root)
         root.mainloop()
     except ImportError as e:

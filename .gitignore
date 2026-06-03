@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+*.egg-info/
+
+# Local runtime config
+.voice_config.json
+config.local.json
+voice_config.local.json
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
