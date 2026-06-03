@@ -26,3 +26,7 @@ voice_config.local.json
 .DS_Store
 .idea/
 .vscode/
+
+# Local runtime config
+config.json
+voice_config.json
