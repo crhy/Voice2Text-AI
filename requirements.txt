@@ -1,5 +1,4 @@
 faster-whisper
-torch
 numpy
 pyperclip
 PyAudio

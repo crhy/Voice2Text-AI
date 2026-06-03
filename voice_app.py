@@ -29,7 +29,6 @@ import numpy as np
 import tempfile
 from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
-import torch
 import requests
 from gtts import gTTS
 import pygame
@@ -308,10 +307,10 @@ class VoiceApp:
         self.post_ui_call(self.progress_bar.config, mode='indeterminate')
         self.post_ui_call(self.progress_bar.start)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Slim release build: do not depend on PyTorch/CUDA.
+        # Faster Whisper uses CTranslate2 and works well on CPU with int8.
+        device = "cpu"
         attempts = [(device, "int8")]
-        if device == "cuda":
-            attempts.append(("cpu", "int8"))
 
         last_error = None
         for attempt_device, compute_type in attempts:
