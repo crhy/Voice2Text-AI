@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Voice2Text-AI
+Comment=Local voice transcription and AI assistant
+Exec=voice2text-ai
+Icon=io.github.crhy.voice2textai
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=voice;transcription;speech;whisper;ollama;ai;
+StartupNotify=true
