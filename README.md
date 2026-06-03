@@ -27,7 +27,7 @@ A cross-platform Python application that transcribes voice input using GPU-accel
 ## Installation
 
 ### Pre-built Executable v0.3.1
-Coming Soon
+- **Windows**: 'Voice2Text.exe' https://github.com/crhy/Voice2Text-AI/releases/download/untagged-b2f214cbdc5143f87235/Voice2Text.exe
 
 ### Pre-built Executables Version 0.2.0
 Download the latest release from [GitHub Releases](https://github.com/crhy/Voice2Text-AI/releases):
