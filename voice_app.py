@@ -558,11 +558,7 @@ class VoiceApp:
         self.dictation_button.config(text="🎙️ Start Dictation")
 
         if self.current_text.strip():
-            try:
-                pyperclip.copy(self.current_text.strip())
-                self.update_status("📋 Text copied to clipboard!", "#0066cc")
-            except Exception as e:
-                self.update_status(f"Dictation stopped; clipboard unavailable: {str(e)[:50]}", "orange")
+            self.update_status("Dictation stopped. Ready to query AI or copy text.", "#0066cc")
         else:
             self.update_status("Ready", "black")
 
