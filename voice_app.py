@@ -374,7 +374,7 @@ class VoiceApp:
         self.canvas.create_window(450, 50, window=title_label)
 
         # Version
-        version_label = tk.Label(self.root, text="v0.02", font=('nimbus sans l', 9), bg='#000000', fg='white')
+        version_label = tk.Label(self.root, text="v0.3.1", font=('nimbus sans l', 9), bg='#000000', fg='white')
         self.canvas.create_window(850, 20, window=version_label)
 
         # Time
