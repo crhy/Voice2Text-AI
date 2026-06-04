@@ -27,7 +27,7 @@ Voice2Text-AI records from your microphone, transcribes speech with Faster Whisp
 
 Download the latest `.flatpak` bundle from GitHub Releases.
 
-    flatpak install --user ./Voice2Text-AI-v0.3.2-x86_64.flatpak
+    flatpak install --user ./Voice2Text-AI-v0.3.3-x86_64.flatpak
     flatpak run io.github.crhy.voice2textai
 
 ## Ollama

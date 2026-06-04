@@ -38,20 +38,20 @@
   <screenshots>
     <screenshot type="default">
       <caption>Main window</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/mainwindow.png</image>
+      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/v0.3.3/docs/screenshots/mainwindow.png</image>
     </screenshot>
     <screenshot>
       <caption>Typical query</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/typicalquery.png</image>
+      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/v0.3.3/docs/screenshots/typicalquery.png</image>
     </screenshot>
     <screenshot>
       <caption>AI response</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/AIresponse.png</image>
+      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/v0.3.3/docs/screenshots/AIresponse.png</image>
     </screenshot>
   </screenshots>
 
   <releases>
-    <release version="0.3.2" date="2026-06-03">
+    <release version="0.3.3" date="2026-06-03">
       <description>
         <p>
           Patch release replacing Google TTS fallback with offline open-source eSpeak NG fallback, updating the visible app version, and keeping the slim CPU Linux build.
