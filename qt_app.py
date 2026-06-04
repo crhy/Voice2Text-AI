@@ -86,7 +86,7 @@ class VoiceAppQt(QMainWindow):
         self.config_file = os.path.expanduser("~/.voice_config.json")
         print(f"Config file: {self.config_file}")
         self.config = self.load_config()
-        self.tts_rate = int(self.config.get("tts_rate", 180))
+        self.tts_rate = int(self.config.get("tts_rate", 200))
 
         self.signals = AppSignals()
 

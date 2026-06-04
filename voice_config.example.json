@@ -2,5 +2,5 @@
   "microphone_name": "",
   "selected_model": "llama3.2",
   "whisper_model": "tiny",
-  "tts_rate": 180
+  "tts_rate": 200
 }
