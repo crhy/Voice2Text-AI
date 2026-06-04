@@ -4,7 +4,7 @@ A Linux desktop app for voice dictation, local AI prompts, and spoken responses.
 
 Voice2Text-AI records from your microphone, transcribes speech with Faster Whisper, sends text to a local Ollama model, and can read responses aloud with text-to-speech.
 
-![Voice2Text-AI main window](docs/screenshots/main-window.png)
+![Voice2Text-AI main window](docs/screenshots/mainwindow.png)
 
 ## Features
 
@@ -19,9 +19,9 @@ Voice2Text-AI records from your microphone, transcribes speech with Faster Whisp
 
 ## Screenshots
 
-![Dictation and AI response](docs/screenshots/dictation-ai-response.png)
+![Dictation and AI response](docs/screenshots/AIresponse.png)
 
-![Voice2Text-AI Flatpak](docs/screenshots/flatpak-running.png)
+![Voice2Text-AI Flatpak](docs/screenshots/typicalquery.png)
 
 ## Install
 
