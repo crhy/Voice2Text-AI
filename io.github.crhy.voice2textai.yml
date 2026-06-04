@@ -65,7 +65,6 @@ modules:
         path: .
     build-commands:
       - install -Dm755 packaging/flatpak/voice2text-ai /app/bin/voice2text-ai
-      - install -Dm644 voice_app.py /app/share/voice2text-ai/voice_app.py
       - install -Dm644 qt_app.py /app/share/voice2text-ai/qt_app.py
       - install -Dm644 config.example.json /app/share/voice2text-ai/config.example.json
       - install -Dm644 voice_config.example.json /app/share/voice2text-ai/voice_config.example.json
