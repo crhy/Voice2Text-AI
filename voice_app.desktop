@@ -1,7 +1,0 @@
-[Desktop Entry]
-Name=Voice 2 Text
-Comment=Voice recognition app with AI integration
-Exec=voice_app.py
-Icon=com.voice2text.app
-Type=Application
-Categories=Utility;Audio;Office;

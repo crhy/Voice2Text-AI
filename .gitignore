@@ -31,3 +31,26 @@ voice_config.local.json
 config.json
 voice_config.json
 Voice2Text-AI.spec
+
+# Python
+.venv*/
+__pycache__/
+*.pyc
+
+# Builds
+build/
+dist/
+build-dir/
+.flatpak-builder/
+flatpak-repo/
+flatpak-build.log
+*.flatpak
+
+# Local config
+config.json
+voice_config.json
+.voice_config.json
+
+# Local backups
+*.bak
+*.bak-*

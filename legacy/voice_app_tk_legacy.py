@@ -362,23 +362,23 @@ class VoiceApp:
         # Style
         style = ttk.Style()
         style.configure('TFrame', background='#000022')
-        style.configure('TButton', font=('nimbus sans l', 13), padding=10, background='#000022', foreground='white')
-        style.configure('TLabel', font=('nimbus sans l', 11), background='#000000', foreground='white')
-        style.configure('TCombobox', font=('nimbus sans l', 11), fieldbackground='white', foreground='black', selectbackground='#000055', selectforeground='white')
+        style.configure('TButton', font=('Noto Sans', 13), padding=10, background='#000022', foreground='white')
+        style.configure('TLabel', font=('Noto Sans', 11), background='#000000', foreground='white')
+        style.configure('TCombobox', font=('Noto Sans', 11), fieldbackground='white', foreground='black', selectbackground='#000055', selectforeground='white')
         style.configure('TCombobox.Listbox', background='#000022', foreground='white', selectbackground='#000055', selectforeground='white')
         style.configure('Vertical.TScrollbar', background='#000022', troughcolor='#000022', arrowcolor='white', bordercolor='#000022')
         style.configure('TProgressbar', background='#00aa00', troughcolor='#000033', bordercolor='#000033')
 
         # Title
-        title_label = tk.Label(self.root, text="Voice 2 Text", font=('nimbus sans l', 30, 'bold'), bg='black', fg='white')
+        title_label = tk.Label(self.root, text="Voice 2 Text", font=('Noto Sans', 30, 'bold'), bg='black', fg='white')
         self.canvas.create_window(450, 50, window=title_label)
 
         # Version
-        version_label = tk.Label(self.root, text="v0.3.1", font=('nimbus sans l', 9), bg='#000000', fg='white')
+        version_label = tk.Label(self.root, text="v0.3.1", font=('Noto Sans', 9), bg='#000000', fg='white')
         self.canvas.create_window(850, 20, window=version_label)
 
         # Time
-        self.time_label = tk.Label(self.root, text="", font=('nimbus sans l', 11), bg='#000000', fg='white')
+        self.time_label = tk.Label(self.root, text="", font=('Noto Sans', 11), bg='#000000', fg='white')
         self.canvas.create_window(850, 40, window=self.time_label)
         self.update_time()
 
@@ -386,21 +386,21 @@ class VoiceApp:
         whisper_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 610, window=whisper_frame)
 
-        tk.Label(whisper_frame, text="Whisper Model:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
+        tk.Label(whisper_frame, text="Whisper Model:", bg='#000022', fg='white', font=('Noto Sans', 12, 'bold')).pack(side='left')
         self.whisper_combo = ttk.Combobox(whisper_frame, textvariable=self.whisper_var, values=self.whisper_models, state='readonly', width=40)
         self.whisper_combo.pack(side='left', padx=(10, 0))
         self.whisper_var.set(self.selected_whisper_model)
         self.whisper_combo.bind('<<ComboboxSelected>>', self.on_whisper_change)
 
         # Loaded model indicator
-        self.loaded_label = tk.Label(whisper_frame, text="Loaded: None", bg='#000010', fg='white', font=('nimbus sans l', 9))
+        self.loaded_label = tk.Label(whisper_frame, text="Loaded: None", bg='#000010', fg='white', font=('Noto Sans', 9))
         self.loaded_label.pack(side='left', padx=(10, 0))
 
         # Microphone selection
         mic_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 650, window=mic_frame)
 
-        tk.Label(mic_frame, text="Microphone:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
+        tk.Label(mic_frame, text="Microphone:", bg='#000022', fg='white', font=('Noto Sans', 12, 'bold')).pack(side='left')
         mic_values = self.microphones if self.microphones else ["No microphone detected"]
         self.mic_combo = ttk.Combobox(mic_frame, textvariable=self.mic_var, values=mic_values, state='readonly', width=40)
         self.mic_combo.pack(side='left', padx=(10, 0))
@@ -410,7 +410,7 @@ class VoiceApp:
         model_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 690, window=model_frame)
 
-        tk.Label(model_frame, text="AI Model:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
+        tk.Label(model_frame, text="AI Model:", bg='#000022', fg='white', font=('Noto Sans', 12, 'bold')).pack(side='left')
         model_values = self.ollama_models if self.ollama_models else ["Ollama not running"]
         self.model_combo = ttk.Combobox(model_frame, textvariable=self.model_var, values=model_values, state='readonly', width=40)
         self.model_combo.pack(side='left', padx=(10, 0))
@@ -421,7 +421,7 @@ class VoiceApp:
         self.model_var.trace_add('write', self.on_model_change)
 
         # Status label with loading indicator
-        self.status_label = tk.Label(self.root, text="Ready", font=('nimbus sans l', 13, 'bold'), bg='#000033', fg='yellow')
+        self.status_label = tk.Label(self.root, text="Ready", font=('Noto Sans', 13, 'bold'), bg='#000033', fg='yellow')
         self.canvas.create_window(450, 110, window=self.status_label)
 
         # Progress bar for model download
@@ -432,27 +432,27 @@ class VoiceApp:
         text_frame = ttk.Frame(self.root)
         self.canvas.create_window(250, 290, window=text_frame)
 
-        tk.Label(text_frame, text="Transcribed Text:", bg='black', fg='white', font=('nimbus sans l', 11, 'bold')).pack(fill='x')
+        tk.Label(text_frame, text="Transcribed Text:", bg='black', fg='white', font=('Noto Sans', 11, 'bold')).pack(fill='x')
         self.text_area = scrolledtext.ScrolledText(text_frame, height=15, width=35, wrap=tk.WORD,
                                                     bg='black', fg='white', insertbackground='white',
-                                                    font=('nimbus sans l', 12), borderwidth=0, relief='flat')
+                                                    font=('Noto Sans', 12), borderwidth=0, relief='flat')
         self.text_area.pack(fill='x', expand=False)
 
         # AI Response area
         ai_frame = ttk.Frame(self.root)
         self.canvas.create_window(650, 290, window=ai_frame)
 
-        tk.Label(ai_frame, text="AI Response:", bg='black', fg='white', font=('nimbus sans l', 11, 'bold')).pack(fill='x')
+        tk.Label(ai_frame, text="AI Response:", bg='black', fg='white', font=('Noto Sans', 11, 'bold')).pack(fill='x')
         self.ai_text_area = scrolledtext.ScrolledText(ai_frame, height=15, width=35, wrap=tk.WORD,
                                                        bg='black', fg='white', insertbackground='white',
-                                                       font=('nimbus sans l', 12), borderwidth=0, relief='flat')
+                                                       font=('Noto Sans', 12), borderwidth=0, relief='flat')
         self.ai_text_area.pack(fill='x', expand=False)
 
         # TTS Controls
         tts_frame = ttk.Frame(self.root, style='TFrame')
         self.canvas.create_window(450, 570, window=tts_frame)
 
-        tk.Label(tts_frame, text="TTS Speed:", bg='#000022', fg='white', font=('nimbus sans l', 12, 'bold')).pack(side='left')
+        tk.Label(tts_frame, text="TTS Speed:", bg='#000022', fg='white', font=('Noto Sans', 12, 'bold')).pack(side='left')
         self.tts_scale = tk.Scale(tts_frame, from_=100, to=300, orient='horizontal', bg='#000022', fg='white', troughcolor='#000055', highlightbackground='#000022')
         self.tts_scale.set(self.tts_rate)
         self.tts_scale.pack(side='left', padx=(10, 0))
@@ -462,15 +462,15 @@ class VoiceApp:
         button_frame = ttk.Frame(self.root)
         self.canvas.create_window(450, 500, window=button_frame)
 
-        self.dictation_button = ttk.Button(button_frame, text="🎙️ Start Dictation",
+        self.dictation_button = ttk.Button(button_frame, text="Start Dictation",
                                            command=self.toggle_dictation)
         self.dictation_button.pack(side='left', padx=5)
 
-        self.copy_button = ttk.Button(button_frame, text="📋 Copy Text",
+        self.copy_button = ttk.Button(button_frame, text="Copy Text",
                                       command=self.copy_text)
         self.copy_button.pack(side='left', padx=5)
 
-        self.send_ai_button = ttk.Button(button_frame, text="🤖 Query AI",
+        self.send_ai_button = ttk.Button(button_frame, text="Query AI",
                                          command=self.send_to_ai)
         self.send_ai_button.pack(side='left', padx=5)
 
@@ -478,7 +478,7 @@ class VoiceApp:
                                           command=self.stop_tts)
         self.stop_tts_button.pack(side='left', padx=5)
 
-        self.clear_button = ttk.Button(button_frame, text="🗑️ Clear",
+        self.clear_button = ttk.Button(button_frame, text="Clear",
                                        command=self.clear_text)
         self.clear_button.pack(side='left', padx=5)
 
@@ -545,17 +545,17 @@ class VoiceApp:
             except queue.Empty:
                 break
         self.text_area.delete(1.0, tk.END)
-        self.text_area.insert(tk.END, "🎙️ Listening... Speak now!\n\n")
+        self.text_area.insert(tk.END, "Listening... Speak now!\n\n")
 
-        self.dictation_button.config(text="⏹️ Stop Dictation")
-        self.update_status("🎙️ Listening...", "#00aa00")
+        self.dictation_button.config(text="Stop Dictation")
+        self.update_status("Listening...", "#00aa00")
 
         # Start listening in background thread
         threading.Thread(target=self.listen_loop, daemon=True).start()
 
     def stop_dictation(self):
         self.is_listening = False
-        self.dictation_button.config(text="🎙️ Start Dictation")
+        self.dictation_button.config(text="Start Dictation")
 
         if self.current_text.strip():
             self.update_status("Dictation stopped. Ready to query AI or copy text.", "#0066cc")
@@ -566,12 +566,12 @@ class VoiceApp:
         if self.is_listening:
             self.stop_dictation()
         text = self.text_area.get(1.0, tk.END).strip()
-        prompt = "🎙️ Listening... Speak now!\n\n"
+        prompt = "Listening... Speak now!\n\n"
         if text.startswith(prompt):
             text = text[len(prompt):].strip()
         if text:
             pyperclip.copy(text)
-            self.update_status("📋 Text copied to clipboard!", "#0066cc")
+            self.update_status("Text copied to clipboard!", "#0066cc")
         else:
             self.update_status("No text to copy", "black")
 
@@ -581,7 +581,7 @@ class VoiceApp:
         text = self.text_area.get(1.0, tk.END).strip()
         if text:
             self.ai_text_area.delete(1.0, tk.END)
-            self.update_status("🤖 Sending to AI...", "#ffaa00")
+            self.update_status("Sending to AI...", "#ffaa00")
             threading.Thread(target=self.query_ollama_and_speak, args=(text,), daemon=True).start()
         else:
             self.update_status("No text to send to AI", "black")
@@ -607,7 +607,7 @@ class VoiceApp:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                self.update_status(f"🤖 Querying AI... (attempt {attempt + 1}/{max_retries})", "#ffaa00")
+                self.update_status(f"Querying AI... (attempt {attempt + 1}/{max_retries})", "#ffaa00")
 
                 response = requests.post(
                     'http://localhost:11434/api/generate',
@@ -629,9 +629,9 @@ class VoiceApp:
 
                 self.queue.put(("clear_ai",))
                 self.queue.put(("insert_ai", ai_response))
-                self.update_status("🎵 Generating speech...", "#00aa00")
+                self.update_status("Generating speech...", "#00aa00")
                 self.speak_with_tts(ai_response)
-                self.update_status("🤖 AI responded successfully!", "#00aa00")
+                self.update_status("AI responded successfully!", "#00aa00")
                 return
 
             except requests.exceptions.Timeout:
@@ -813,7 +813,7 @@ class VoiceApp:
                 return
 
             device_index = self.get_mic_device_index(self.microphones[self.selected_mic_index])
-            sample_rates = [16000, 22050, 32000, 44100, 48000, 8000]
+            sample_rates = [48000, 44100, 16000, 22050, 8000]
             self.audio_stream = None
 
             for rate in sample_rates:
@@ -838,7 +838,7 @@ class VoiceApp:
                 return
 
             self.audio_stream.start_stream()
-            self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
+            self.queue.put(("update_status", "Listening... (real-time)", "#00aa00"))
 
             chunk_duration = 3.0
             silence_threshold = 500
@@ -881,19 +881,19 @@ class VoiceApp:
                 except Exception:
                     pass
 
-                self.queue.put(("update_status", "🔍 Recognizing...", "#ffaa00"))
+                self.queue.put(("update_status", "Recognizing...", "#ffaa00"))
                 try:
                     text = self.transcribe_audio(audio_data, self.sample_rate)
                     if text:
                         self.current_text += text + " "
                         self.queue.put(("update_transcript", text))
-                    self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
+                    self.queue.put(("update_status", "Listening... (real-time)", "#00aa00"))
                 except Exception as e:
                     self.queue.put(("update_transcript", f"[Error: {e}]"))
-                    self.queue.put(("update_status", "🎙️ Listening... (real-time)", "#00aa00"))
+                    self.queue.put(("update_status", "Listening... (real-time)", "#00aa00"))
 
             if pending_frames:
-                self.queue.put(("update_status", "🔍 Finalizing...", "#ffaa00"))
+                self.queue.put(("update_status", "Finalizing...", "#ffaa00"))
                 try:
                     audio_data = np.frombuffer(b''.join(pending_frames), dtype=np.int16)
                     text = self.transcribe_audio(audio_data, self.sample_rate)
@@ -925,6 +925,38 @@ class VoiceApp:
 def main():
     try:
         root = tk.Tk()
+
+        # Flatpak/Tk font fix: force Tk named fonts to bundled DejaVu Sans.
+        try:
+            root.tk.call('tk', 'scaling', 1.35)
+
+            for font_name in (
+                'TkDefaultFont',
+                'TkTextFont',
+                'TkMenuFont',
+                'TkHeadingFont',
+                'TkCaptionFont',
+                'TkSmallCaptionFont',
+                'TkIconFont',
+                'TkTooltipFont',
+            ):
+                try:
+                    tkfont.nametofont(font_name).configure(
+                        family='Noto Sans',
+                        size=11,
+                    )
+                except Exception:
+                    pass
+
+            try:
+                tkfont.nametofont('TkFixedFont').configure(
+                    family='Noto Sans',
+                    size=11,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
         with contextlib.suppress(Exception):
             root.tk.call('tk', 'scaling', 1.35)
         app = VoiceApp(root)
