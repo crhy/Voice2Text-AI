@@ -43,6 +43,7 @@ modules:
       - type: git
         url: https://github.com/PortAudio/portaudio.git
         tag: v19.7.0
+        commit: 147dd722548358763a8b649b3e4b41dfffbcfbb6
 
   - name: espeak-ng
     buildsystem: simple
@@ -50,6 +51,7 @@ modules:
       - type: git
         url: https://github.com/espeak-ng/espeak-ng.git
         tag: 1.52.0
+        commit: 4870adfa25b1a32b4361592f1be8a40337c58d6c
     build-commands:
       - ./autogen.sh
       - ./configure --prefix=/app --with-sonic=no --with-mbrola=no --with-pcaudiolib=no
