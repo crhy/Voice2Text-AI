@@ -36,14 +36,14 @@ from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 
 from PySide6.QtCore import Qt, QObject, Signal, QTimer
-from PySide6.QtGui import QFont, QPainter, QLinearGradient, QColor, QBrush
+from PySide6.QtGui import QFont, QPainter, QLinearGradient, QColor, QBrush, QIcon
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
-APP_VERSION = "v0.3.1"
+APP_VERSION = "v0.3.2"
 
 
 class AppSignals(QObject):
@@ -86,11 +86,15 @@ class VoiceAppQt(QMainWindow):
         self.config_file = os.path.expanduser("~/.voice_config.json")
         print(f"Config file: {self.config_file}")
         self.config = self.load_config()
-        self.tts_rate = int(self.config.get("tts_rate", 180))
+        self.tts_rate = int(self.config.get("tts_rate", 200))
 
         self.signals = AppSignals()
 
         self.setWindowTitle("Voice 2 Text")
+
+        icon_path = os.path.join(os.path.dirname(__file__), "icons", "io.github.crhy.voice2textai.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.resize(1000, 940)
         self.setMinimumSize(900, 860)
 
@@ -742,7 +746,7 @@ class VoiceAppQt(QMainWindow):
             model = self.model
         if model is None:
             raise RuntimeError("Whisper model not loaded")
-        segments, _info = model.transcribe(audio_float, language="en", beam_size=1, vad_filter=True, condition_on_previous_text=False)
+        segments, _info = model.transcribe(audio_float, language="en", beam_size=1, vad_filter=False, condition_on_previous_text=False)
         return " ".join(segment.text for segment in segments).strip()
 
     def listen_loop(self):

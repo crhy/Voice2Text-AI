@@ -54,3 +54,4 @@ voice_config.json
 # Local backups
 *.bak
 *.bak-*
+repo/
