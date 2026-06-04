@@ -8,3 +8,4 @@ pygame
 pillow
 edge-tts
 soundfile
+PySide6
