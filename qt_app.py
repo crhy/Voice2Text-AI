@@ -91,8 +91,8 @@ class VoiceAppQt(QMainWindow):
         self.signals = AppSignals()
 
         self.setWindowTitle("Voice 2 Text")
-        self.resize(900, 800)
-        self.setMinimumSize(760, 650)
+        self.resize(1000, 940)
+        self.setMinimumSize(900, 860)
 
         self.whisper_models = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
         self.selected_whisper_model = self.config.get("whisper_model", "tiny")
@@ -174,20 +174,36 @@ class VoiceAppQt(QMainWindow):
 
         top_row = QHBoxLayout()
         top_row.addStretch()
-        self.version_label = QLabel(APP_VERSION)
-        self.version_label.setFont(QFont("Noto Sans", 9))
-        top_row.addWidget(self.version_label)
-        outer.addLayout(top_row)
 
-        self.title_label = QLabel("Voice 2 Text")
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setFont(QFont("Noto Sans", 30, QFont.Bold))
-        outer.addWidget(self.title_label)
+        header_right = QVBoxLayout()
+        header_right.setSpacing(2)
+
+        self.version_label = QLabel(APP_VERSION)
+        self.version_label.setAlignment(Qt.AlignRight)
+        self.version_label.setFont(QFont("Noto Sans", 10))
+        header_right.addWidget(self.version_label)
 
         self.time_label = QLabel("")
         self.time_label.setAlignment(Qt.AlignRight)
         self.time_label.setFont(QFont("Noto Sans", 10))
-        outer.addWidget(self.time_label)
+        header_right.addWidget(self.time_label)
+
+        top_row.addLayout(header_right)
+        outer.addLayout(top_row)
+
+        self.title_label = QLabel("Voice 2 Text")
+        self.title_label.setObjectName("titleLabel")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setMinimumHeight(95)
+        self.title_label.setFont(QFont("Noto Sans", 46, QFont.Bold))
+        self.title_label.setStyleSheet(
+            "font-size: 46pt; "
+            "font-weight: 800; "
+            "color: white; "
+            "background: transparent;"
+        )
+        outer.addWidget(self.title_label)
+
 
         self.status_label = QLabel("Ready")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -220,6 +236,7 @@ class VoiceAppQt(QMainWindow):
         text_grid.addWidget(self.text_area, 1, 0)
         text_grid.addWidget(self.ai_text_area, 1, 1)
         outer.addLayout(text_grid)
+        outer.addSpacing(38)
 
         button_row = QHBoxLayout()
         button_row.setSpacing(10)
@@ -233,6 +250,65 @@ class VoiceAppQt(QMainWindow):
         self.stop_tts_button.clicked.connect(self.stop_tts)
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_text)
+        # Direct shiny button styling
+        shiny_button_style = """
+        QPushButton {
+            color: white;
+            background: qlineargradient(
+                x1: 0, y1: 0, x2: 0, y2: 1,
+                stop: 0 #2d3d9f,
+                stop: 0.18 #1b2875,
+                stop: 0.52 #0b1249,
+                stop: 1 #030622
+            );
+            border-top: 2px solid #8796dd;
+            border-left: 2px solid #5f6fc2;
+            border-right: 2px solid #05082a;
+            border-bottom: 2px solid #020315;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 12pt;
+            font-weight: 700;
+        }
+        QPushButton:hover {
+            background: qlineargradient(
+                x1: 0, y1: 0, x2: 0, y2: 1,
+                stop: 0 #3b50c9,
+                stop: 0.20 #263597,
+                stop: 0.55 #10195c,
+                stop: 1 #05082a
+            );
+            border-top: 2px solid #b8c4ff;
+            border-left: 2px solid #7f90e6;
+            border-right: 2px solid #10195c;
+            border-bottom: 2px solid #070a2f;
+        }
+        QPushButton:pressed {
+            background: qlineargradient(
+                x1: 0, y1: 0, x2: 0, y2: 1,
+                stop: 0 #020315,
+                stop: 0.48 #070d34,
+                stop: 1 #1b2875
+            );
+            padding-top: 12px;
+            padding-bottom: 8px;
+            border-top: 2px solid #020315;
+            border-left: 2px solid #020315;
+            border-right: 2px solid #5f6fc2;
+            border-bottom: 2px solid #8796dd;
+        }
+        """
+        for button in (
+            self.dictation_button,
+            self.copy_button,
+            self.send_ai_button,
+            self.stop_tts_button,
+            self.clear_button,
+        ):
+            button.setMinimumHeight(50)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(shiny_button_style)
+
         for button in (self.dictation_button, self.copy_button, self.send_ai_button, self.stop_tts_button, self.clear_button):
             button_row.addWidget(button)
         outer.addLayout(button_row)
@@ -261,6 +337,7 @@ class VoiceAppQt(QMainWindow):
         self.whisper_combo = QComboBox()
         self.whisper_combo.addItems(self.whisper_models)
         self.whisper_combo.setCurrentText(self.selected_whisper_model)
+        self.whisper_combo.setFixedWidth(420)
         self.whisper_combo.currentTextChanged.connect(self.on_whisper_change)
         self.loaded_label = QLabel("Loaded: None")
         self.loaded_label.setFont(QFont("Noto Sans", 9))
@@ -274,12 +351,14 @@ class VoiceAppQt(QMainWindow):
                 self.selected_mic_index = 0
                 self.selected_mic_name = self.microphones[0]
             self.mic_combo.setCurrentIndex(self.selected_mic_index)
+        self.mic_combo.setFixedWidth(420)
         self.mic_combo.currentIndexChanged.connect(self.on_mic_change_combo)
         self.model_combo = QComboBox()
         model_values = self.ollama_models if self.ollama_models else ["Ollama not running"]
         self.model_combo.addItems(model_values)
         if self.ollama_models:
             self.model_combo.setCurrentText(self.selected_model)
+        self.model_combo.setFixedWidth(420)
         self.model_combo.currentTextChanged.connect(self.on_model_change)
         labels = [QLabel("Whisper Model:"), QLabel("Microphone:"), QLabel("AI Model:")]
         for label in labels:
