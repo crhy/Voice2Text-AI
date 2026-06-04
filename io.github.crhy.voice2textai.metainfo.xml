@@ -36,7 +36,7 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.3.1" date="2026-06-03">
+    <release version="0.3.2" date="2026-06-03">
       <description>
         <p>
           Patch release replacing Google TTS fallback with offline open-source eSpeak NG fallback, updating the visible app version, and keeping the slim CPU Linux build.
