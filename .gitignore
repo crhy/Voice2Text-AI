@@ -1,57 +1,10 @@
-# Python
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Build artifacts
-build/
-dist/
-*.spec.bak
-*.egg-info/
-
-# Local runtime config
-.voice_config.json
-config.local.json
-voice_config.local.json
-
-# OS/editor
-.DS_Store
-.idea/
-.vscode/
-
-# Local runtime config
-config.json
-voice_config.json
-Voice2Text-AI.spec
-
-# Python
 .venv*/
-__pycache__/
-*.pyc
-
-# Builds
-build/
-dist/
 build-dir/
 .flatpak-builder/
-flatpak-repo/
-flatpak-build.log
-*.flatpak
-
-# Local config
-config.json
-voice_config.json
-.voice_config.json
-
-# Local backups
-*.bak
-*.bak-*
 repo/
+*.flatpak
+python3-requirements-flatpak.json
