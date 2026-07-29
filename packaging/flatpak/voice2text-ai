@@ -1,6 +1,24 @@
 #!/bin/sh
 
-export SDL_AUDIODRIVER=pulseaudio
+# GTK 4 can leave stale damage fragments on some NVIDIA + X11/Compiz
+# combinations. Keep the GL renderer, disable incremental presentation, and
+# force complete redraws on X11. The app is small enough that this has minimal
+# overhead while preserving animations and reliable rendering.
+: "${GSK_RENDERER:=gl}"
+export GSK_RENDERER
 
-cd /app/share/voice2text-ai
-exec python3 /app/share/voice2text-ai/qt_app.py "$@"
+case ",${GDK_DISABLE:-}," in
+  *,incremental-present,*) ;;
+  *) GDK_DISABLE="${GDK_DISABLE:+$GDK_DISABLE,}incremental-present" ;;
+esac
+export GDK_DISABLE
+
+if [ "${XDG_SESSION_TYPE:-}" = "x11" ] || { [ -n "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; }; then
+  case ",${GSK_DEBUG:-}," in
+    *,full-redraw,*) ;;
+    *) GSK_DEBUG="${GSK_DEBUG:+$GSK_DEBUG,}full-redraw" ;;
+  esac
+  export GSK_DEBUG
+fi
+
+exec python3 /app/lib/voice2text-ai/voice2text_ai.py "$@"

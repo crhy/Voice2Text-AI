@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice2text-ai"
+version = "0.4.0"
+description = "Native Linux voice dictation and local AI desktop application"
+requires-python = ">=3.11"
+dependencies = [
+  "faster-whisper>=1.2,<2",
+  "numpy>=2.0,<3",
+  "edge-tts>=7.2,<8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[project.scripts]
+voice2text-ai = "voice2text.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["voice2text*"]

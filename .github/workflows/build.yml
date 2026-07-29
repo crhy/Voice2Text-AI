@@ -1,9 +1,10 @@
-name: Build and Release
+name: Test and build Flatpak
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -11,110 +12,65 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-tk
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest ruff
-      - name: Lint critical syntax/import issues
-        run: ruff check . --select E9,F63,F7,F82
-      - name: Compile Python files
-        run: python -m py_compile *.py
+          python-version: '3.13'
+      - name: Install test tools
+        run: python -m pip install --upgrade pytest ruff
+      - name: Compile source
+        run: python -m compileall -q voice2text voice2text_ai.py qt_app.py
+      - name: Lint
+        run: ruff check voice2text tests voice2text_ai.py qt_app.py
+      - name: Unit tests
+        run: python -m pytest -q
 
-  build-linux:
+  flatpak:
     needs: test
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-tk
-      - name: Install dependencies
+      - name: Generate pinned Python sources
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-      - name: Build executable
-        run: pyinstaller voice_app.spec
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Voice2Text-Linux
-          path: dist/Voice2Text
+          git clone --depth=1 https://github.com/flatpak/flatpak-builder-tools.git /tmp/flatpak-builder-tools
+          python3 /tmp/flatpak-builder-tools/pip/flatpak-pip-generator \
+            --requirements-file=packaging/flatpak/requirements.txt \
 
-  build-windows:
-    needs: test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-      - name: Build executable
-        run: pyinstaller voice_app.spec
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Voice2Text-Windows
-          path: dist/Voice2Text.exe
+            --runtime org.gnome.Sdk//50 \
 
-  build-macos:
-    needs: test
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+            --prefer-wheels=ctranslate2,onnxruntime,tokenizers,av,numpy,pyyaml,protobuf,hf-xet \
+
+            --wheel-arches=x86_64 \
+
+            --output=python3-requirements-flatpak
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          python-version: '3.11'
-      - name: Install PortAudio
-        run: brew install portaudio
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-      - name: Build executable
-        run: pyinstaller voice_app.spec
-      - name: Upload artifact
+          bundle: Voice2Text-AI.flatpak
+          manifest-path: io.github.crhy.voice2textai.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          mirror-screenshots-url: https://dl.flathub.org/media
+      - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Voice2Text-macOS
-          path: dist/Voice2Text
+          name: Voice2Text-AI-Flatpak
+          path: Voice2Text-AI.flatpak
 
   release:
-    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: flatpak
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
         with:
-          files: |
-            Voice2Text-Linux/Voice2Text
-            Voice2Text-Windows/Voice2Text.exe
-            Voice2Text-macOS/Voice2Text
-            install.sh
+          name: Voice2Text-AI-Flatpak
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Voice2Text AI ${{ github.ref_name }}
           draft: true
-          prerelease: false
+          generate_release_notes: true
+          files: Voice2Text-AI.flatpak

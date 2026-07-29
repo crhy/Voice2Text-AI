@@ -1,61 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.crhy.voice2textai</id>
-
-  <name>Voice2Text-AI</name>
-  <summary>Local voice transcription and AI assistant</summary>
-
+  <name>Voice2Text AI</name>
+  <summary>Fast native Linux dictation and local AI</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-
-  <description>
-    <p>
-      Voice2Text-AI is a desktop voice assistant for recording speech, transcribing it with Faster Whisper, and sending text to local Ollama models.
-    </p>
-    <p>
-      It supports microphone dictation, clipboard copying, local AI responses, and text-to-speech output with an open-source offline eSpeak NG fallback.
-    </p>
-  </description>
-
-  <launchable type="desktop-id">io.github.crhy.voice2textai.desktop</launchable>
-
   <developer id="io.github.crhy">
     <name>crhy</name>
   </developer>
-
+  <description>
+    <p>Voice2Text AI records from your microphone, transcribes speech locally with Faster Whisper, sends prompts to a local Ollama model, and reads responses aloud with a natural neural voice and an offline eSpeak NG fallback.</p>
+    <p>The interface follows the system GTK and libadwaita theme, supports Wayland and X11, and uses PipeWire or PulseAudio through GStreamer.</p>
+  </description>
+  <launchable type="desktop-id">io.github.crhy.voice2textai.desktop</launchable>
   <url type="homepage">https://github.com/crhy/Voice2Text-AI</url>
   <url type="bugtracker">https://github.com/crhy/Voice2Text-AI/issues</url>
-  <url type="vcs-browser">https://github.com/crhy/Voice2Text-AI</url>
-
-  <categories>
-    <category>Utility</category>
-    <category>AudioVideo</category>
-    <category>Audio</category>
-  </categories>
-
-  <content_rating type="oars-1.1" />
-
   <screenshots>
     <screenshot type="default">
-      <caption>Main window</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/mainwindow.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Typical query</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/typicalquery.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>AI response</caption>
-      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/cleanup/repo-hygiene/docs/screenshots/AIresponse.png</image>
+      <image type="source">https://raw.githubusercontent.com/crhy/Voice2Text-AI/f5ad8ae34b86e06d524db705f6672818b7eaa1d1/docs/screenshots/v0.4.0-main.png</image>
+      <caption>Voice transcription and a streamed local AI response in dark mode</caption>
     </screenshot>
   </screenshots>
-
+  <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.3.2" date="2026-06-03">
+    <release version="0.4.0" date="2026-07-29">
       <description>
-        <p>
-          Patch release replacing Google TTS fallback with offline open-source eSpeak NG fallback, updating the visible app version, and keeping the slim CPU Linux build.
-        </p>
+        <p>Rebuilt around GTK 4, libadwaita, and GStreamer with a modular, lower-overhead runtime.</p>
       </description>
     </release>
   </releases>
