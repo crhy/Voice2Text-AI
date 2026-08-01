@@ -28,7 +28,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
           python3 /tmp/flatpak-builder-tools/pip/flatpak-pip-generator \
             --requirements-file=packaging/flatpak/requirements.txt \
 
-            --runtime org.gnome.Sdk//50 \
+            --runtime org.gnome.Sdk//48 \
 
             --prefer-wheels=ctranslate2,onnxruntime,tokenizers,av,numpy,pyyaml,protobuf,hf-xet \
 

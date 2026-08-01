@@ -1,6 +1,6 @@
 id: io.github.crhy.voice2textai
 runtime: org.gnome.Platform
-runtime-version: '50'
+runtime-version: '48'
 sdk: org.gnome.Sdk
 command: voice2text-ai
 
