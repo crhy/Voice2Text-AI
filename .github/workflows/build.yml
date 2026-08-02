@@ -32,11 +32,12 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v4
-      - name: Generate pinned Python sources
-        shell: bash
-        run: |
-          git clone --depth=1 https://github.com/flatpak/flatpak-builder-tools.git /tmp/flatpak-builder-tools
-          python3 /tmp/flatpak-builder-tools/pip/flatpak-pip-generator --requirements-file=packaging/flatpak/requirements.txt --runtime org.gnome.Sdk//48 --prefer-wheels=ctranslate2,onnxruntime,tokenizers,av,numpy,pyyaml,protobuf,aiohttp --wheel-arches=x86_64 --output=python3-requirements-flatpak
+      # python3-requirements-flatpak.json is committed. To regenerate it after
+      # changing packaging/flatpak/requirements.txt, run flatpak-pip-generator
+      # with org.gnome.Sdk//48 and the same --prefer-wheels/--wheel-arches args,
+      # then merge requests, urllib3 and charset_normalizer into the
+      # python3-faster-whisper module (flatpak-pip-generator splits them out when
+      # huggingface-hub is pinned below the latest version).
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: Voice2Text-AI.flatpak

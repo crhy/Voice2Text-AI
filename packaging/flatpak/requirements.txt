@@ -3,4 +3,7 @@ numpy>=2.0,<3
 edge-tts>=7.2,<8
 # Pin the pre-1.0 hub that still uses requests: newer hubs pull hf-xet and the
 # httpx stack, adding several MB to the flatpak with no benefit for model downloads.
+# NOTE: python3-requirements-flatpak.json is committed. When changing this file,
+# regenerate it (see .github/workflows/build.yml) and merge requests, urllib3 and
+# charset_normalizer into the python3-faster-whisper module before building.
 huggingface-hub==0.28.1

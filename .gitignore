@@ -7,4 +7,3 @@ build-dir/
 .flatpak-builder/
 repo/
 *.flatpak
-python3-requirements-flatpak.json

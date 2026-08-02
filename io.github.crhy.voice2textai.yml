@@ -26,7 +26,7 @@ modules:
       - make -j${FLATPAK_BUILDER_N_JOBS}
       - make install
 
-  # Generated with flatpak-pip-generator from packaging/flatpak/requirements.txt.
+  # Generated with flatpak-pip-generator (committed; see requirements.txt note).
   - python3-requirements-flatpak.json
 
   - name: voice2text-ai
