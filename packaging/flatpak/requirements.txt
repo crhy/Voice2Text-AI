@@ -1,3 +1,6 @@
 faster-whisper>=1.2,<2
 numpy>=2.0,<3
 edge-tts>=7.2,<8
+# Pin the pre-1.0 hub that still uses requests: newer hubs pull hf-xet and the
+# httpx stack, adding several MB to the flatpak with no benefit for model downloads.
+huggingface-hub==0.28.1

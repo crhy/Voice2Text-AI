@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from collections.abc import Callable
@@ -61,7 +62,10 @@ class WhisperService:
         try:
             from faster_whisper import WhisperModel
 
-            cpu_threads = max(1, min(8, os.cpu_count() or 4))
+            available = 0
+            with contextlib.suppress(OSError):
+                available = len(os.sched_getaffinity(0))
+            cpu_threads = max(1, min(8, available or os.cpu_count() or 4))
             attempts = [
                 (os.environ.get("VOICE2TEXT_DEVICE", "auto"), "default"),
                 ("cpu", "int8"),

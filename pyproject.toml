@@ -20,7 +20,6 @@ pythonpath = ["."]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-exclude = ["legacy"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
