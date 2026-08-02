@@ -8,6 +8,8 @@ eSpeak NG fallback.
 Built with GTK 4 and libadwaita, powered by GStreamer, and distributed as a
 Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
 
+![Voice2Text AI 0.4 main window](docs/screenshots/v0.4.0-main.png)
+
 ## Features
 
 - **On-device dictation** — microphone audio is transcribed locally by Faster
