@@ -39,6 +39,10 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2:0.5b
 
 ```
+qwen2:0.5b is the smallest useful model at ~350mb.
+Depending on hardware, you may want to upgrade to:
+ollama pull qwen3.6:27b
+*Note this model will run much better on a GPU with > 17gb of ram
 
 The Whisper model downloads on first launch (the `base` model is the default;
 smaller models use less memory and start faster).
