@@ -35,7 +35,9 @@ flatpak run io.github.crhy.voice2textai
 For local AI, install [Ollama](https://ollama.com/) and pull a model, for example:
 
 ```bash
-ollama pull llama3.1:8b
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2:0.5b
+
 ```
 
 The Whisper model downloads on first launch (the `base` model is the default;
