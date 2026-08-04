@@ -42,8 +42,8 @@ modules:
         sha256: 8d566b5fe745c46842dc16945cf36686227536decd2302c372be86da37faca68
     build-commands:
       - mkdir -p /app/lib/cuda
-      - tar -xJf libcublas-*.tar.xz
-      - tar -xJf cuda_cudart-*.tar.xz
+      - tar -xJf libcublas-*.tar.xz --no-same-owner
+      - tar -xJf cuda_cudart-*.tar.xz --no-same-owner
       - install -Dm755 libcublas-*-archive/lib/libcublas.so.12.8.5.5 /app/lib/cuda/
       - install -Dm755 libcublas-*-archive/lib/libcublasLt.so.12.8.5.5 /app/lib/cuda/
       - install -Dm755 cuda_cudart-*-archive/lib/libcudart.so.12.8.90 /app/lib/cuda/
