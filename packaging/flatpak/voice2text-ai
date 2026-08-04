@@ -21,4 +21,8 @@ if [ "${XDG_SESSION_TYPE:-}" = "x11" ] || { [ -n "${DISPLAY:-}" ] && [ -z "${WAY
   export GSK_DEBUG
 fi
 
+# Expose the bundled CUDA compute libraries (cuBLAS/cuDNN runtime) so Faster
+# Whisper can use the GPU inside the Flatpak sandbox.
+export LD_LIBRARY_PATH="/app/lib/cuda${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 exec python3 /app/lib/voice2text-ai/voice2text_ai.py "$@"

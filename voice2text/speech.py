@@ -34,6 +34,7 @@ class SpeechService:
         self._on_done = None
         self._on_error = None
         self._started_emitted = False
+        self._finished = False
 
     def speak(
         self,
@@ -52,6 +53,7 @@ class SpeechService:
         self._on_done = on_done
         self._on_error = on_error
         self._started_emitted = False
+        self._finished = False
 
         if edge_tts is not None:
             try:
@@ -272,7 +274,7 @@ class SpeechService:
         return cancel_event is self.cancel_event and not cancel_event.is_set()
 
     def _emit_started_for(self, cancel_event: threading.Event) -> bool:
-        if not self._is_current(cancel_event) or self._started_emitted:
+        if not self._is_current(cancel_event) or self._started_emitted or self._finished:
             return False
         self._started_emitted = True
         if self._on_started is not None:
@@ -282,6 +284,7 @@ class SpeechService:
     def _on_eos(self, _bus, _message, cancel_event: threading.Event) -> None:
         if not self._is_current(cancel_event):
             return
+        self._finished = True
         self._finish_media()
         if self._on_done is not None:
             self._on_done()
@@ -295,6 +298,7 @@ class SpeechService:
     def _emit_error_for(self, message: str, cancel_event: threading.Event) -> bool:
         if not self._is_current(cancel_event):
             return False
+        self._finished = True
         self._finish_media()
         if self._on_error is not None:
             self._on_error(message)

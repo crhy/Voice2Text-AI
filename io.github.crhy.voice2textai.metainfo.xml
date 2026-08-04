@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.1" date="2026-08-04">
+      <description>
+        <p>Faster GPU dictation by probing the CUDA compute stack before loading, bundling the CUDA runtime libraries, and stopping the speaking indicator when speech finishes.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-08-02">
       <description>
         <p>Rebuilt around GTK 4, libadwaita, and GStreamer with a modular, lower-overhead runtime.</p>

@@ -29,6 +29,28 @@ modules:
   # Generated with flatpak-pip-generator (committed; see requirements.txt note).
   - python3-requirements-flatpak.json
 
+  - name: nvidia-cuda-runtime
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    sources:
+      - type: file
+        url: https://developer.download.nvidia.com/compute/cuda/redist/libcublas/linux-x86_64/libcublas-linux-x86_64-12.8.5.5-archive.tar.xz
+        sha256: f732baf6e55de1844f9bea6646ceae13f30b10592f87b12406bf4713b7f67521
+      - type: file
+        url: https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.8.90-archive.tar.xz
+        sha256: 8d566b5fe745c46842dc16945cf36686227536decd2302c372be86da37faca68
+    build-commands:
+      - mkdir -p /app/lib/cuda
+      - tar -xJf libcublas-*.tar.xz
+      - tar -xJf cuda_cudart-*.tar.xz
+      - install -Dm755 libcublas-*-archive/lib/libcublas.so.12.8.5.5 /app/lib/cuda/
+      - install -Dm755 libcublas-*-archive/lib/libcublasLt.so.12.8.5.5 /app/lib/cuda/
+      - install -Dm755 cuda_cudart-*-archive/lib/libcudart.so.12.8.90 /app/lib/cuda/
+      - ln -sf libcublas.so.12.8.5.5 /app/lib/cuda/libcublas.so.12
+      - ln -sf libcublasLt.so.12.8.5.5 /app/lib/cuda/libcublasLt.so.12
+      - ln -sf libcudart.so.12.8.90 /app/lib/cuda/libcudart.so.12
+
   - name: voice2text-ai
     buildsystem: simple
     sources:

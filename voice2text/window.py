@@ -250,7 +250,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.status_box.queue_draw()
 
     def _toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
+        self.toast_overlay.add_toast(
+            Adw.Toast(title=GLib.markup_escape_text(text), timeout=4)
+        )
 
     def _start_progress(self) -> None:
         self.progress.set_visible(True)
