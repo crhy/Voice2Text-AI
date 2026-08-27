@@ -28,22 +28,50 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
       - uses: actions/checkout@v4
       # python3-requirements-flatpak.json is committed. To regenerate it after
       # changing packaging/flatpak/requirements.txt, run flatpak-pip-generator
-      # with org.gnome.Sdk//48 and the same --prefer-wheels/--wheel-arches args,
+      # with org.gnome.Sdk//50 and the same --prefer-wheels/--wheel-arches args,
       # then merge requests, urllib3 and charset_normalizer into the
       # python3-faster-whisper module (flatpak-pip-generator splits them out when
       # huggingface-hub is pinned below the latest version).
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: Voice2Text-AI.flatpak
           manifest-path: io.github.crhy.voice2textai.yml
+          branch: master
+          repo-dir: voice2text-repo
+          build-bundle: false
+          upload-artifact: false
           cache-key: flatpak-builder-${{ github.sha }}
           mirror-screenshots-url: https://dl.flathub.org/media
+      - name: Create updateable release bundle
+        run: >-
+          flatpak build-bundle
+          --arch=x86_64
+          --repo-url=https://crhy.github.io/spacedbazaar/flatpak-repo/
+          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+          voice2text-repo
+          Voice2Text-AI.flatpak
+          io.github.crhy.voice2textai
+          master
+      - name: Verify bundle can be imported by current OSTree
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe=$(mktemp -d)
+          repo="$probe/repo"
+          checkout="$probe/checkout"
+          ostree init --repo="$repo" --mode=archive-z2
+          flatpak build-import-bundle --no-update-summary "$repo" Voice2Text-AI.flatpak
+          ref=app/io.github.crhy.voice2textai/x86_64/master
+          ostree --repo="$repo" refs | grep -Fx "$ref"
+          ostree --repo="$repo" checkout --user-mode "$ref" "$checkout"
+          test -f "$checkout/export/share/metainfo/io.github.crhy.voice2textai.metainfo.xml"
+          test -s "$checkout/export/share/icons/hicolor/256x256/apps/io.github.crhy.voice2textai.png"
+          flatpak build-update-repo "$repo"
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +91,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           name: Voice2Text AI ${{ github.ref_name }}
-          draft: true
+          draft: false
           generate_release_notes: true
           files: Voice2Text-AI.flatpak

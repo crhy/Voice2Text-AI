@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.2" date="2026-08-27">
+      <description>
+        <p>Rebuilt the CUDA runtime with an OSTree-safe cuBLAS release so the Flatpak can be imported, installed, and mirrored by current Flatpak repositories.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-08-04">
       <description>
         <p>Faster GPU dictation by probing the CUDA compute stack before loading, bundling the CUDA runtime libraries, and stopping the speaking indicator when speech finishes.</p>

@@ -82,7 +82,7 @@ locally, generate the pinned module and run flatpak-builder:
 git clone https://github.com/flatpak/flatpak-builder-tools.git /tmp/flatpak-builder-tools
 python3 /tmp/flatpak-builder-tools/pip/flatpak-pip-generator \
   --requirements-file=packaging/flatpak/requirements.txt \
-  --runtime org.gnome.Sdk//48 \
+  --runtime org.gnome.Sdk//50 \
   --prefer-wheels=ctranslate2,onnxruntime,tokenizers,av,numpy,pyyaml,protobuf \
   --wheel-arches=x86_64 \
   --output=python3-requirements-flatpak

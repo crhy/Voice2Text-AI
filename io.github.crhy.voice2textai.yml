@@ -1,6 +1,6 @@
 id: io.github.crhy.voice2textai
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 command: voice2text-ai
 
@@ -35,21 +35,25 @@ modules:
       - x86_64
     sources:
       - type: file
-        url: https://developer.download.nvidia.com/compute/cuda/redist/libcublas/linux-x86_64/libcublas-linux-x86_64-12.8.5.5-archive.tar.xz
-        sha256: f732baf6e55de1844f9bea6646ceae13f30b10592f87b12406bf4713b7f67521
+        # CUDA 12.8's libcublasLt object is larger than OSTree's 512 MiB
+        # decompressed-object safety limit.  CUDA 12.6 keeps the same
+        # libcublas.so.12 ABI while remaining safely importable by current
+        # Flatpak/OSTree releases.
+        url: https://developer.download.nvidia.com/compute/cuda/redist/libcublas/linux-x86_64/libcublas-linux-x86_64-12.6.4.1-archive.tar.xz
+        sha256: ec682bac6387f9cdfd0c20b25a16cd6ed0b8b3b7ff42be9eaeb41828e3a72572
       - type: file
-        url: https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.8.90-archive.tar.xz
-        sha256: 8d566b5fe745c46842dc16945cf36686227536decd2302c372be86da37faca68
+        url: https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.6.77-archive.tar.xz
+        sha256: f74689258a60fd9c5bdfa7679458527a55e22442691ba678dcfaeffbf4391ef9
     build-commands:
       - mkdir -p /app/lib/cuda
       - tar -xJf libcublas-*.tar.xz --no-same-owner
       - tar -xJf cuda_cudart-*.tar.xz --no-same-owner
-      - install -Dm755 libcublas-*-archive/lib/libcublas.so.12.8.5.5 /app/lib/cuda/
-      - install -Dm755 libcublas-*-archive/lib/libcublasLt.so.12.8.5.5 /app/lib/cuda/
-      - install -Dm755 cuda_cudart-*-archive/lib/libcudart.so.12.8.90 /app/lib/cuda/
-      - ln -sf libcublas.so.12.8.5.5 /app/lib/cuda/libcublas.so.12
-      - ln -sf libcublasLt.so.12.8.5.5 /app/lib/cuda/libcublasLt.so.12
-      - ln -sf libcudart.so.12.8.90 /app/lib/cuda/libcudart.so.12
+      - install -Dm755 libcublas-*-archive/lib/libcublas.so.12.6.4.1 /app/lib/cuda/
+      - install -Dm755 libcublas-*-archive/lib/libcublasLt.so.12.6.4.1 /app/lib/cuda/
+      - install -Dm755 cuda_cudart-*-archive/lib/libcudart.so.12.6.77 /app/lib/cuda/
+      - ln -sf libcublas.so.12.6.4.1 /app/lib/cuda/libcublas.so.12
+      - ln -sf libcublasLt.so.12.6.4.1 /app/lib/cuda/libcublasLt.so.12
+      - ln -sf libcudart.so.12.6.77 /app/lib/cuda/libcudart.so.12
 
   - name: voice2text-ai
     buildsystem: simple
