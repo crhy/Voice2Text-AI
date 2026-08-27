@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import struct
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -57,3 +58,21 @@ def test_flatpak_uses_supported_runtime_and_python_wheels() -> None:
     assert "runtime-version: '50'" in manifest
     assert "cp313" in requirements
     assert "cp312" not in requirements
+
+
+def test_application_icon_pack_is_complete() -> None:
+    master = ROOT / "icons" / "io.github.crhy.voice2textai-1024.png"
+    assert master.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+    for size in (16, 24, 32, 48, 64, 128, 256, 512):
+        icon = ROOT / "icons" / "hicolor" / f"{size}x{size}" / "apps" / (
+            "io.github.crhy.voice2textai.png"
+        )
+        data = icon.read_bytes()
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+        assert struct.unpack(">II", data[16:24]) == (size, size)
+
+    exported = ROOT / "icons" / "io.github.crhy.voice2textai.png"
+    assert exported.read_bytes() == (
+        ROOT / "icons" / "io.github.crhy.voice2textai-256.png"
+    ).read_bytes()

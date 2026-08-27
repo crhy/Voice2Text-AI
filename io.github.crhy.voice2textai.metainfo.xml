@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.3" date="2026-08-27">
+      <description>
+        <p>Introduces a metallic microphone-and-waveform medallion that matches the Spaced Linux visual family while remaining distinct and recognizable at application-icon sizes.</p>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-08-27">
       <description>
         <p>Rebuilt the CUDA runtime with an OSTree-safe cuBLAS release so the Flatpak can be imported, installed, and mirrored by current Flatpak repositories.</p>
