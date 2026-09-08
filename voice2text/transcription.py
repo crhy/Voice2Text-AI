@@ -133,7 +133,7 @@ class WhisperService:
         CTranslate2 can report a CUDA device during load and only fail once a
         compute kernel runs (e.g. missing cuBLAS), so verify before committing.
         """
-        audio = np.zeros(1600, dtype=np.float32)
+        audio = np.zeros(2560, dtype=np.float32)
         for _segment in model.transcribe(
             audio,
             language="en",
@@ -151,7 +151,8 @@ class WhisperService:
         if model is None:
             raise TranscriptionError("The Whisper model has not finished loading.")
 
-        audio = np.frombuffer(pcm_s16le, dtype="<i2").astype(np.float32) / 32768.0
+        audio = np.frombuffer(pcm_s16le, dtype="<i2").astype(np.float32)
+        audio /= 32768.0
         segments, _info = model.transcribe(
             audio,
             language=language or None,

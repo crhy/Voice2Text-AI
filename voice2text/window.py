@@ -462,9 +462,13 @@ class MainWindow(Adw.ApplicationWindow):
         view.get_buffer().set_text(text)
 
     def _stop_dictation_for_action(self) -> None:
-        """Stop microphone capture before actions that consume or replace text."""
-        if self.listening or self.record_button.get_active():
-            self.stop_recording()
+        """Stop microphone capture before actions that consume or replace text.
+
+        This must run unconditionally: a dictation session can already be
+        producing results while ``self.listening`` is not yet set.
+        ``stop_recording`` is idempotent, so an idle call is harmless.
+        """
+        self.stop_recording()
 
     def copy_transcript(self) -> None:
         self._stop_dictation_for_action()
@@ -508,6 +512,21 @@ class MainWindow(Adw.ApplicationWindow):
         self.ask_button.set_sensitive(False)
         self._set_status(f"Asking {model}…", busy=True)
 
+        # Batch streamed chunks so the main loop schedules at most one idle
+        # callback per batch instead of one per token chunk.
+        pending_chunks: list[str] = []
+
+        def flush_chunks() -> None:
+            if pending_chunks:
+                batch = "".join(pending_chunks)
+                pending_chunks.clear()
+                idle(self._append_response, batch, generation, cancel_event)
+
+        def on_chunk(chunk: str) -> None:
+            pending_chunks.append(chunk)
+            if len(pending_chunks) >= 8:
+                flush_chunks()
+
         def worker() -> None:
             try:
                 client = OllamaClient(endpoint)
@@ -515,10 +534,12 @@ class MainWindow(Adw.ApplicationWindow):
                     model=model,
                     prompt=prompt,
                     cancel_event=cancel_event,
-                    on_chunk=lambda chunk: idle(self._append_response, chunk, generation, cancel_event),
+                    on_chunk=on_chunk,
                 )
+                flush_chunks()
                 idle(self._on_query_finished, answer, generation, cancel_event)
             except OllamaError as exc:
+                flush_chunks()
                 idle(self._on_query_error, str(exc), generation, cancel_event)
 
         threading.Thread(target=worker, name=f"ollama-query-{generation}", daemon=True).start()
@@ -526,11 +547,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _query_is_current(self, generation: int, cancel_event: threading.Event) -> bool:
         return generation == self._query_generation and cancel_event is self.query_cancel
 
-    def _append_response(self, chunk: str, generation: int, cancel_event: threading.Event) -> bool:
+    def _append_response(self, batch: str, generation: int, cancel_event: threading.Event) -> bool:
         if not self._query_is_current(generation, cancel_event) or cancel_event.is_set():
             return False
         buffer = self.response_view.get_buffer()
-        buffer.insert(buffer.get_end_iter(), chunk)
+        buffer.insert(buffer.get_end_iter(), batch)
         return False
 
     def _on_query_finished(

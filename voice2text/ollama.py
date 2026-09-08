@@ -58,6 +58,7 @@ class OllamaClient:
         )
 
         chunks: list[str] = []
+        stream_error: str | None = None
         try:
             with urllib.request.urlopen(request, timeout=180) as response:
                 for raw_line in response:
@@ -66,6 +67,15 @@ class OllamaClient:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line:
                         continue
+                    # Newer Ollama servers (0.1.33+) may serve streaming responses
+                    # as Server-Sent Events: skip "event:" lines and strip the
+                    # "data:" prefix before parsing the JSON payload.
+                    if line.startswith("event:"):
+                        continue
+                    if line.startswith("data:"):
+                        line = line.removeprefix("data:").strip()
+                        if not line:
+                            continue
                     try:
                         event = json.loads(line)
                     except json.JSONDecodeError:
@@ -73,7 +83,11 @@ class OllamaClient:
                     if not isinstance(event, dict):
                         continue
                     if event.get("error"):
-                        raise OllamaError(str(event["error"]))
+                        # Record but do not raise mid-iteration: let the loop
+                        # finish so any already-delivered chunks stay in the
+                        # UI, and raise after the connection is closed.
+                        stream_error = str(event["error"])
+                        break
                     text = event.get("response", "")
                     if text:
                         chunks.append(text)
@@ -85,5 +99,8 @@ class OllamaClient:
             raise OllamaError(f"Ollama returned HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise OllamaError(f"Ollama request failed: {exc}") from exc
+
+        if stream_error is not None:
+            raise OllamaError(stream_error)
 
         return "".join(chunks).strip()

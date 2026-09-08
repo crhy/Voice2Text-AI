@@ -89,7 +89,11 @@ class DictationController:
                     last_any_voice = now
 
             duration = len(segment) / (16000 * 2)
-            pause_ready = heard_voice and duration >= 0.8 and now - last_voice >= self.silence_seconds
+            # Require a little recorded content before treating a pause as a
+            # boundary; scale it with the silence setting so short pauses cut
+            # sooner instead of accumulating toward the max-segment cutoff.
+            min_content = min(0.8, max(0.3, self.silence_seconds / 2.0))
+            pause_ready = heard_voice and duration >= min_content and now - last_voice >= self.silence_seconds
             max_ready = heard_voice and duration >= self.max_segment_seconds
             if pause_ready or max_ready:
                 self._flush(segment)

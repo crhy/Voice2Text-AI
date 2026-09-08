@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.4" date="2026-09-07">
+      <description>
+        <p>Efficiency improvements: faster audio level metering and transcription probes, batched AI response rendering, quieter eSpeak fallback startup, and more robust streaming for newer Ollama servers.</p>
+      </description>
+    </release>
     <release version="0.4.3" date="2026-08-27">
       <description>
         <p>Introduces a metallic microphone-and-waveform medallion that matches the Spaced Linux visual family while remaining distinct and recognizable at application-icon sizes.</p>

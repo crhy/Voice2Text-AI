@@ -150,8 +150,7 @@ class SpeechService:
     ) -> None:
         if edge_tts is None:
             raise RuntimeError("Edge TTS is unavailable")
-        percent = round(((rate - 180) / 120) * 50)
-        percent = max(-50, min(50, percent))
+        percent = max(-50, min(50, round(((rate - 180) / 120) * 50)))
         communicate = edge_tts.Communicate(
             text,
             voice or "en-US-AriaNeural",
@@ -229,6 +228,7 @@ class SpeechService:
                 ["espeak-ng", "--stdout", "-s", str(rate), text],
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
             )
             if cancel_event.is_set():
                 return

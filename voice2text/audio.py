@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import contextlib
-import math
-import sys
 import time
-from array import array
 from dataclasses import dataclass
 from typing import Any
 
 import gi
+import numpy as np
 
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
@@ -137,15 +135,12 @@ class AudioCapture:
 
     @staticmethod
     def _rms(pcm: bytes) -> float:
-        samples = array("h")
-        samples.frombytes(pcm)
-        if sys.byteorder != "little":
-            samples.byteswap()
-        if not samples:
+        samples = np.frombuffer(pcm, dtype="<i2")
+        if not samples.size:
             return 0.0
-        stride = max(1, len(samples) // 2048)
-        chosen = samples[::stride]
-        return math.sqrt(sum(value * value for value in chosen) / len(chosen))
+        stride = max(1, samples.size // 2048)
+        chosen = samples[::stride].astype(np.float64)
+        return float(np.sqrt(np.mean(chosen * chosen)))
 
     def _on_bus_error(self, _bus, message) -> None:
         error, debug = message.parse_error()
