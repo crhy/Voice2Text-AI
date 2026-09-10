@@ -5,10 +5,17 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 
 
 class OllamaError(RuntimeError):
     pass
+
+
+@dataclass(slots=True, frozen=True)
+class ModelInfo:
+    name: str
+    size_bytes: int
 
 
 class OllamaClient:
@@ -16,17 +23,27 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def list_models(self) -> list[str]:
+    def _list_models_payload(self) -> list[dict]:
         request = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 payload = json.load(response)
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             raise OllamaError(f"Could not connect to Ollama: {exc}") from exc
-
         models = payload.get("models", []) if isinstance(payload, dict) else []
-        names = [item.get("name", "") for item in models if isinstance(item, dict)]
+        return [item for item in models if isinstance(item, dict)]
+
+    def list_models(self) -> list[str]:
+        names = [item.get("name", "") for item in self._list_models_payload()]
         return sorted(name for name in names if name)
+
+    def list_models_detailed(self) -> list[ModelInfo]:
+        infos = [
+            ModelInfo(name=item["name"], size_bytes=int(item.get("size", 0) or 0))
+            for item in self._list_models_payload()
+            if item.get("name")
+        ]
+        return sorted(infos, key=lambda info: info.name)
 
     def generate_stream(
         self,
@@ -104,3 +121,71 @@ class OllamaClient:
             raise OllamaError(stream_error)
 
         return "".join(chunks).strip()
+
+    def pull_model(
+        self,
+        model: str,
+        *,
+        cancel_event: threading.Event,
+        on_progress: Callable[[str, int, int], None],
+    ) -> None:
+        """Pull ``model``, reporting ``(status, completed_bytes, total_bytes)`` as it downloads."""
+        name = model.strip()
+        if not name:
+            raise OllamaError("No model name was given.")
+
+        payload = json.dumps({"name": name, "stream": True}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/pull",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=1800) as response:
+                for raw_line in response:
+                    if cancel_event.is_set():
+                        break
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    if event.get("error"):
+                        raise OllamaError(str(event["error"]))
+                    status = str(event.get("status", ""))
+                    total = int(event.get("total", 0) or 0)
+                    completed = int(event.get("completed", 0) or 0)
+                    on_progress(status, completed, total)
+                    if status == "success":
+                        break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+            raise OllamaError(f"Ollama returned HTTP {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise OllamaError(f"Pulling {name} failed: {exc}") from exc
+
+    def delete_model(self, model: str) -> None:
+        name = model.strip()
+        if not name:
+            raise OllamaError("No model name was given.")
+
+        payload = json.dumps({"name": name}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/delete",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                response.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+            raise OllamaError(f"Ollama returned HTTP {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise OllamaError(f"Could not delete {name}: {exc}") from exc

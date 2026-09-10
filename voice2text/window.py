@@ -13,11 +13,18 @@ from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .config import ConfigStore  # noqa: E402
 from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
+from .hardware import detect_available_model_memory_gb, suggest_models  # noqa: E402
+from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError  # noqa: E402
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
 
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
+# Conversation mode's wake-word phase runs continuously in the background, so
+# it always uses this small model instead of whichever (possibly much
+# larger) model the user picked for real dictation — that one only has to
+# run once per turn, after the wake word is actually heard.
+WAKE_WHISPER_MODEL = "tiny"
 APPEARANCE_VALUES = ["system", "light", "dark"]
 APPEARANCE_LABELS = ["System", "Light", "Dark"]
 TTS_VOICES = [
@@ -74,6 +81,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.style_manager = Adw.StyleManager.get_default()
         self._apply_appearance()
         self.whisper = WhisperService()
+        self.wake_whisper = WhisperService()
         self.audio = AudioCapture()
         self.speech = SpeechService()
         self.dictation: DictationController | None = None
@@ -87,12 +95,28 @@ class MainWindow(Adw.ApplicationWindow):
         self._level_source = 0
         self._latest_level = 0.0
         self._query_generation = 0
+        self._hardware_summary = "Detecting your hardware…"
+        self._suggested_models: list[str] = []
+        self._install_cancel = threading.Event()
+        self._installing = False
 
         self._build_ui()
         self._install_actions()
         self._refresh_devices()
         self._refresh_ollama_models()
+        self._detect_hardware_async()
         self._load_whisper(self.settings.whisper_model)
+        self._load_wake_whisper()
+
+    def _load_wake_whisper(self) -> None:
+        # Runs quietly in the background: conversation mode falls back to the
+        # main model (see start_conversation_mode) if this isn't ready yet,
+        # so a slow or failed load here should never block anything.
+        self.wake_whisper.load_async(
+            WAKE_WHISPER_MODEL,
+            lambda _name, _backend: None,
+            lambda error: idle(self._toast, f"Wake-word model failed to load: {error}"),
+        )
 
     def _build_ui(self) -> None:
         self.toast_overlay = Adw.ToastOverlay()
@@ -165,8 +189,14 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar.add_bottom_bar(action_bar)
 
         self.copy_button = Gtk.Button(label="Copy")
+        self.copy_button.set_tooltip_text("Copy the transcript (Ctrl+Shift+C)")
         self.copy_button.connect("clicked", lambda *_: self.copy_transcript())
         action_bar.pack_start(self.copy_button)
+
+        self.copy_response_button = Gtk.Button(label="Copy Reply")
+        self.copy_response_button.set_tooltip_text("Copy the AI response")
+        self.copy_response_button.connect("clicked", lambda *_: self.copy_response())
+        action_bar.pack_start(self.copy_response_button)
 
         self.clear_button = Gtk.Button(label="Clear")
         self.clear_button.connect("clicked", lambda *_: self.clear_all())
@@ -227,6 +257,7 @@ class MainWindow(Adw.ApplicationWindow):
             "conversation": self.toggle_conversation,
             "ask": self.ask_ai,
             "copy": self.copy_transcript,
+            "copy-response": self.copy_response,
             "clear": self.clear_all,
         }
         for name, callback in actions.items():
@@ -238,6 +269,7 @@ class MainWindow(Adw.ApplicationWindow):
         app.set_accels_for_action("win.conversation", ["<Control><Shift>r"])
         app.set_accels_for_action("win.ask", ["<Control>Return"])
         app.set_accels_for_action("win.copy", ["<Control><Shift>c"])
+        app.set_accels_for_action("win.copy-response", ["<Control><Shift>v"])
         app.set_accels_for_action("win.clear", ["<Control>l"])
         app.set_accels_for_action("win.preferences", ["<Control>comma"])
 
@@ -320,11 +352,283 @@ class MainWindow(Adw.ApplicationWindow):
 
         threading.Thread(target=worker, name="ollama-models", daemon=True).start()
 
+    def _detect_hardware_async(self) -> None:
+        def worker() -> None:
+            available_gb, source = detect_available_model_memory_gb()
+            suggestions = suggest_models(available_gb)
+            idle(self._apply_hardware_summary, available_gb, source, suggestions)
+
+        threading.Thread(target=worker, name="hardware-detect", daemon=True).start()
+
+    def _apply_hardware_summary(self, available_gb: float, source: str, suggestions: list) -> bool:
+        self._suggested_models = [model.name for model in suggestions]
+        names = ", ".join(self._suggested_models)
+        self._hardware_summary = f"Suggested for this machine (~{available_gb:.0f} GB {source}): {names}"
+        return False
+
     def _apply_ollama_models(self, models: list[str]) -> bool:
         self.ollama_models = models
         if models and self.settings.ollama_model not in models:
             self.settings.ollama_model = models[0]
             self.config_store.save(self.settings)
+        return False
+
+    @staticmethod
+    def _scroll_to_end(view: Gtk.TextView) -> None:
+        buffer = view.get_buffer()
+        end_iter = buffer.get_end_iter()
+        mark = buffer.create_mark(None, end_iter, False)
+        view.scroll_to_mark(mark, 0.0, False, 0.0, 0.0)
+        buffer.delete_mark(mark)
+
+    def _start_ollama_install(self) -> None:
+        if self._installing:
+            self._toast("Ollama installation is already running.")
+            return
+        self._installing = True
+        cancel_event = threading.Event()
+        self._install_cancel = cancel_event
+
+        dialog = Adw.Dialog(title="Installing Ollama", content_width=560, content_height=420)
+        toolbar = Adw.ToolbarView()
+        dialog.set_child(toolbar)
+        toolbar.add_top_bar(Adw.HeaderBar(show_end_title_buttons=False))
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        toolbar.set_content(box)
+
+        info = Gtk.Label(
+            label="This downloads the official installer from ollama.com and runs it as "
+            "root. You'll be asked for your password.",
+            wrap=True,
+            xalign=0,
+        )
+        box.append(info)
+
+        log_view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True)
+        log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        scroller.set_child(log_view)
+        box.append(scroller)
+
+        cancel_button = Gtk.Button(label="Cancel", halign=Gtk.Align.END)
+        box.append(cancel_button)
+
+        def append_log(line: str) -> bool:
+            buffer = log_view.get_buffer()
+            buffer.insert(buffer.get_end_iter(), line + "\n")
+            self._scroll_to_end(log_view)
+            return False
+
+        def on_cancel(*_args) -> None:
+            cancel_event.set()
+            cancel_button.set_sensitive(False)
+            cancel_button.set_label("Stopping…")
+
+        cancel_button.connect("clicked", on_cancel)
+        dialog.connect("closed", lambda *_: cancel_event.set())
+        dialog.present(self)
+
+        def worker() -> None:
+            try:
+                exit_code = install_ollama(
+                    on_output=lambda line: idle(append_log, line),
+                    cancel_event=cancel_event,
+                )
+            except InstallerError as exc:
+                idle(self._on_install_finished, dialog, False, str(exc))
+                return
+            if cancel_event.is_set():
+                idle(self._on_install_finished, dialog, False, "Installation cancelled.")
+            elif exit_code == 0:
+                idle(self._on_install_finished, dialog, True, "Ollama installed successfully.")
+            else:
+                idle(self._on_install_finished, dialog, False, f"Installer exited with status {exit_code}.")
+
+        threading.Thread(target=worker, name="ollama-install", daemon=True).start()
+
+    def _on_install_finished(self, dialog: Adw.Dialog, success: bool, message: str) -> bool:
+        self._installing = False
+        dialog.close()
+        self._toast(message)
+        if success:
+            self._refresh_ollama_models()
+        return False
+
+    def _show_model_manager(self) -> None:
+        dialog = Adw.Dialog(title="Manage Ollama Models", content_width=560, content_height=520)
+        toolbar = Adw.ToolbarView()
+        dialog.set_child(toolbar)
+        toolbar.add_top_bar(Adw.HeaderBar())
+
+        page = Adw.PreferencesPage()
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(page)
+        toolbar.set_content(scroller)
+
+        installed_group = Adw.PreferencesGroup(title="Installed")
+        page.add(installed_group)
+        installed_rows: dict[str, Adw.ActionRow] = {}
+        if self.ollama_models:
+            for name in self.ollama_models:
+                row = Adw.ActionRow(title=name, subtitle="Calculating size…")
+                delete_button = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+                delete_button.add_css_class("flat")
+                delete_button.set_tooltip_text(f"Remove {name}")
+                delete_button.connect(
+                    "clicked", lambda _btn, model=name: self._confirm_delete_model(dialog, model)
+                )
+                row.add_suffix(delete_button)
+                installed_rows[name] = row
+                installed_group.add(row)
+        else:
+            installed_group.add(Adw.ActionRow(title="No models installed yet"))
+
+        def apply_sizes(infos: list) -> bool:
+            for info in infos:
+                row = installed_rows.get(info.name)
+                if row is not None:
+                    row.set_subtitle(f"{info.size_bytes / (1024**3):.1f} GB")
+            return False
+
+        def fetch_sizes() -> None:
+            try:
+                infos = OllamaClient(self.settings.ollama_url).list_models_detailed()
+            except OllamaError:
+                return
+            idle(apply_sizes, infos)
+
+        if installed_rows:
+            threading.Thread(target=fetch_sizes, name="ollama-sizes", daemon=True).start()
+
+        pull_group = Adw.PreferencesGroup(
+            title="Pull a model",
+            description="Enter any Ollama model tag, or pick a suggestion for this machine.",
+        )
+        page.add(pull_group)
+
+        pull_row = Adw.EntryRow(title="Model name")
+        pull_button = Gtk.Button(label="Pull", valign=Gtk.Align.CENTER)
+        pull_button.add_css_class("suggested-action")
+        pull_row.add_suffix(pull_button)
+        pull_group.add(pull_row)
+
+        progress_bar = Gtk.ProgressBar(visible=False, show_text=True)
+        pull_group.add(progress_bar)
+
+        if self._suggested_models:
+            suggestion_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            suggestion_box.set_margin_top(4)
+            suggestion_box.set_margin_bottom(8)
+            suggestion_box.set_margin_start(12)
+            suggestion_box.set_margin_end(12)
+            for name in self._suggested_models:
+                chip = Gtk.Button(label=name)
+                chip.connect("clicked", lambda _btn, model=name: pull_row.set_text(model))
+                suggestion_box.append(chip)
+            pull_group.add(suggestion_box)
+
+        def set_pulling(active: bool) -> None:
+            pull_button.set_sensitive(not active)
+            pull_row.set_sensitive(not active)
+            progress_bar.set_visible(active)
+            if not active:
+                progress_bar.set_fraction(0)
+                progress_bar.set_text("")
+
+        def on_progress(status: str, completed: int, total: int) -> bool:
+            if total > 0:
+                progress_bar.set_fraction(min(1.0, completed / total))
+                progress_bar.set_text(f"{status} — {completed / (1024**2):.0f} / {total / (1024**2):.0f} MB")
+            else:
+                progress_bar.set_fraction(0.0)
+                progress_bar.set_text(status)
+            return False
+
+        def on_pull_finished(success: bool, message: str) -> bool:
+            set_pulling(False)
+            self._toast(message)
+            if success:
+                dialog.close()
+                self._show_model_manager()
+            return False
+
+        def start_pull(*_args) -> None:
+            name = pull_row.get_text().strip()
+            if not name:
+                self._toast("Enter a model name first.")
+                return
+            set_pulling(True)
+            cancel_event = threading.Event()
+            client = OllamaClient(self.settings.ollama_url)
+
+            def worker() -> None:
+                try:
+                    client.pull_model(
+                        name,
+                        cancel_event=cancel_event,
+                        on_progress=lambda status, completed, total: idle(
+                            on_progress, status, completed, total
+                        ),
+                    )
+                    try:
+                        models = client.list_models()
+                    except OllamaError:
+                        models = self.ollama_models
+                    idle(self._apply_ollama_models, models)
+                    idle(on_pull_finished, True, f"Pulled {name}.")
+                except OllamaError as exc:
+                    idle(on_pull_finished, False, str(exc))
+
+            threading.Thread(target=worker, name="ollama-pull", daemon=True).start()
+
+        pull_button.connect("clicked", start_pull)
+        dialog.present(self)
+
+    def _confirm_delete_model(self, parent_dialog: Adw.Dialog, model: str) -> None:
+        confirm = Adw.AlertDialog(
+            heading=f"Remove {model}?",
+            body="This deletes the downloaded model from disk. You can pull it again later.",
+        )
+        confirm.add_response("cancel", "Cancel")
+        confirm.add_response("delete", "Remove")
+        confirm.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        confirm.set_default_response("cancel")
+        confirm.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            if response != "delete":
+                return
+            endpoint = self.settings.ollama_url
+
+            def worker() -> None:
+                try:
+                    OllamaClient(endpoint).delete_model(model)
+                    try:
+                        models = OllamaClient(endpoint).list_models()
+                    except OllamaError:
+                        models = [name for name in self.ollama_models if name != model]
+                    idle(self._apply_ollama_models, models)
+                    idle(self._on_model_deleted, parent_dialog, True, f"Removed {model}.")
+                except OllamaError as exc:
+                    idle(self._on_model_deleted, parent_dialog, False, str(exc))
+
+            threading.Thread(target=worker, name="ollama-delete", daemon=True).start()
+
+        confirm.connect("response", on_response)
+        confirm.present(parent_dialog)
+
+    def _on_model_deleted(self, parent_dialog: Adw.Dialog, success: bool, message: str) -> bool:
+        self._toast(message)
+        if success:
+            parent_dialog.close()
+            self._show_model_manager()
         return False
 
     def _load_whisper(self, model_name: str) -> None:
@@ -451,7 +755,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.stop_recording()
 
         self.conversation = ConversationController(
-            self.whisper,
+            wake_whisper=self.wake_whisper if self.wake_whisper.ready else self.whisper,
+            prompt_whisper=self.whisper,
             language=self.settings.language,
             wake_word=self.settings.wake_word,
             threshold=self.settings.voice_threshold,
@@ -583,6 +888,7 @@ class MainWindow(Adw.ApplicationWindow):
         end = buffer.get_end_iter()
         prefix = "" if buffer.get_char_count() == 0 else " "
         buffer.insert(end, prefix + text.strip())
+        self._scroll_to_end(self.transcript_view)
         self._set_status("Listening…" if self.listening else "Ready", busy=self.listening)
         return False
 
@@ -608,18 +914,32 @@ class MainWindow(Adw.ApplicationWindow):
         if not self.conversation_active:
             self.stop_recording()
 
-    def copy_transcript(self) -> None:
-        self._stop_dictation_for_action()
-        text = self._get_text(self.transcript_view)
+    def _copy_view_text(self, view: Gtk.TextView, *, empty_message: str, done_message: str) -> None:
+        text = self._get_text(view)
         if not text:
-            self._toast("There is no transcript to copy.")
+            self._toast(empty_message)
             return
         display = Gdk.Display.get_default()
         if display is None:
             self._toast("The clipboard is unavailable.")
             return
         display.get_clipboard().set(text)
-        self._toast("Transcript copied.")
+        self._toast(done_message)
+
+    def copy_transcript(self) -> None:
+        self._stop_dictation_for_action()
+        self._copy_view_text(
+            self.transcript_view,
+            empty_message="There is no transcript to copy.",
+            done_message="Transcript copied.",
+        )
+
+    def copy_response(self) -> None:
+        self._copy_view_text(
+            self.response_view,
+            empty_message="There is no AI response to copy.",
+            done_message="Response copied.",
+        )
 
     def clear_all(self) -> None:
         self._stop_dictation_for_action()
@@ -693,6 +1013,7 @@ class MainWindow(Adw.ApplicationWindow):
             return False
         buffer = self.response_view.get_buffer()
         buffer.insert(buffer.get_end_iter(), batch)
+        self._scroll_to_end(self.response_view)
         return False
 
     def _on_query_finished(
@@ -746,6 +1067,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.stop_recording()
         if self.conversation_active:
             self.stop_conversation_mode()
+        if self._installing:
+            self._install_cancel.set()
         self.query_cancel.set()
         self._query_generation += 1
         self.speech.stop()
@@ -838,7 +1161,7 @@ class MainWindow(Adw.ApplicationWindow):
         ai_group = Adw.PreferencesGroup(title="Local AI")
         page.add(ai_group)
         model_names = self.ollama_models or ["No models found"]
-        ai_row = Adw.ComboRow(title="Ollama model")
+        ai_row = Adw.ComboRow(title="Ollama model", subtitle=self._hardware_summary)
         ai_row.set_model(Gtk.StringList.new(model_names))
         if self.settings.ollama_model in model_names:
             ai_row.set_selected(model_names.index(self.settings.ollama_model))
@@ -851,6 +1174,21 @@ class MainWindow(Adw.ApplicationWindow):
         auto_speak_row = Adw.SwitchRow(title="Speak AI responses automatically")
         auto_speak_row.set_active(self.settings.auto_speak)
         ai_group.add(auto_speak_row)
+
+        install_row = Adw.ActionRow(
+            title="Install or update Ollama",
+            subtitle="Downloads the latest installer from ollama.com and runs it with a password prompt",
+        )
+        install_button = Gtk.Button(label="Install", valign=Gtk.Align.CENTER)
+        install_button.connect("clicked", lambda *_: self._start_ollama_install())
+        install_row.add_suffix(install_button)
+        ai_group.add(install_row)
+
+        manage_row = Adw.ActionRow(title="Pull or remove models")
+        manage_button = Gtk.Button(label="Manage models…", valign=Gtk.Align.CENTER)
+        manage_button.connect("clicked", lambda *_: self._show_model_manager())
+        manage_row.add_suffix(manage_button)
+        ai_group.add(manage_row)
 
         conversation_group = Adw.PreferencesGroup(
             title="Conversation mode",
@@ -942,6 +1280,7 @@ class MainWindow(Adw.ApplicationWindow):
                         <child><object class="GtkShortcutsShortcut"><property name="title">Start or stop conversation mode</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;r</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Ask AI</property><property name="accelerator">&lt;Control&gt;Return</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Copy transcript</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;c</property></object></child>
+                        <child><object class="GtkShortcutsShortcut"><property name="title">Copy AI response</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;v</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Clear</property><property name="accelerator">&lt;Control&gt;l</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Preferences</property><property name="accelerator">&lt;Control&gt;comma</property></object></child>
                       </object>

@@ -31,19 +31,23 @@ class ConversationController:
     """Listens for a wake word, then captures the next utterance as a prompt.
 
     Reuses the same speech-pause segmentation as :class:`DictationController`
-    (via :func:`segment_stream`) so no extra always-on model is required: the
-    already-loaded Whisper model transcribes each detected utterance and the
-    result is checked for the configured wake word. A dedicated low-latency
-    wake-word engine could replace this later without changing the caller
-    contract (``feed``/``start``/``stop`` plus the three callbacks).
+    (via :func:`segment_stream`), so no dedicated wake-word model is required
+    — a small, always-loaded Whisper model transcribes each utterance heard
+    while waiting, and the result is checked for the configured wake word.
+    Once woken, the caller's real (possibly much larger) model transcribes
+    the actual command, since accuracy matters there but not during idle
+    listening. A dedicated low-latency wake-word engine could replace the
+    wake phase later without changing the caller contract (``feed``/
+    ``start``/``stop`` plus the four callbacks).
     """
 
     PROMPT_TIMEOUT_SECONDS = 8.0
 
     def __init__(
         self,
-        whisper: WhisperService,
         *,
+        wake_whisper: WhisperService,
+        prompt_whisper: WhisperService,
         language: str,
         wake_word: str,
         threshold: int,
@@ -54,7 +58,12 @@ class ConversationController:
         on_status: Callable[[str], None],
         on_error: Callable[[str], None],
     ) -> None:
-        self.whisper = whisper
+        # The wake phase runs constantly in the background, so it uses a small,
+        # dedicated model (see WAKE_WHISPER_MODEL in window.py) instead of
+        # whatever (possibly much larger) model the user picked for real
+        # transcription — that model is only needed once actually woken.
+        self.wake_whisper = wake_whisper
+        self.prompt_whisper = prompt_whisper
         self.language = language
         self.wake_word = wake_word
         self.threshold = threshold
@@ -117,9 +126,9 @@ class ConversationController:
             return segment
         return None
 
-    def _transcribe(self, segment: bytes) -> str:
+    def _transcribe(self, segment: bytes, whisper: WhisperService) -> str:
         try:
-            return self.whisper.transcribe(segment, self.language)
+            return whisper.transcribe(segment, self.language)
         except Exception as exc:  # noqa: BLE001 - worker boundary
             self.on_error(str(exc))
             return ""
@@ -135,7 +144,8 @@ class ConversationController:
                 waiting_for_prompt = False
                 continue
 
-            text = self._transcribe(segment)
+            whisper = self.prompt_whisper if waiting_for_prompt else self.wake_whisper
+            text = self._transcribe(segment, whisper)
             if not text:
                 continue
 

@@ -20,6 +20,14 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
   network voice is unavailable, eSpeak NG speaks offline automatically.
 - **Adaptive segmentation** — speech is split at pauses, so dictation flows
   naturally while transcribing in the background.
+- **Conversation mode** — say a wake word (default "computer") and it starts
+  listening, transcribes your request, asks the selected Ollama model, and
+  speaks the reply back — hands-free from wake word to answer.
+- **Hardware-aware model suggestions** — Preferences shows Ollama models
+  sized to fit your detected GPU VRAM (or system RAM if there's no GPU).
+- **One-click Ollama install and model management** — install or update
+  Ollama with a native password prompt, and pull or remove models from
+  Preferences, all without a terminal.
 - **Coordinated appearance** — follows the system light/dark setting, with an
   explicit override in Preferences.
 
@@ -32,17 +40,22 @@ flatpak install --user Voice2Text-AI.flatpak
 flatpak run io.github.crhy.voice2textai
 ```
 
-For local AI, install [Ollama](https://ollama.com/) and pull a model, for example:
+For local AI, you need [Ollama](https://ollama.com/) with at least one model
+pulled. Preferences → Local AI has an **Install** button that downloads the
+official installer and runs it with a native password prompt (via `pkexec`),
+and a **Manage models…** button that pulls or removes models — including
+suggestions sized to fit your machine's detected GPU VRAM (or RAM if there's
+no GPU) — without a terminal.
+
+To do the same by hand instead:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2:0.5b
-
+ollama pull qwen2.5:0.5b
 ```
-qwen2:0.5b is the smallest useful model at ~350mb.
-Depending on hardware, you may want to upgrade to:
-ollama pull qwen3.6:27b
-*Note this model will run much better on a GPU with > 17gb of ram
+
+`qwen2.5:0.5b` is the smallest useful model at well under 1 GB. Depending on
+your hardware you may want a larger one — Preferences shows what fits.
 
 The Whisper model downloads on first launch (the `base` model is the default;
 smaller models use less memory and start faster).
@@ -66,8 +79,10 @@ PyPI entry point is `voice2text-ai`.
 | Shortcut            | Action                        |
 | ------------------- | ----------------------------- |
 | `Ctrl+R`            | Start or stop dictation       |
+| `Ctrl+Shift+R`      | Start or stop conversation mode |
 | `Ctrl+Enter`        | Ask AI                        |
 | `Ctrl+Shift+C`      | Copy transcript               |
+| `Ctrl+Shift+V`      | Copy AI response               |
 | `Ctrl+L`            | Clear                         |
 | `Ctrl+,`            | Preferences                   |
 | `Ctrl+Q`            | Quit                          |

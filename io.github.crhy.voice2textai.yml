@@ -11,6 +11,13 @@ finish-args:
   - --socket=pulseaudio
   - --share=network
   - --device=dri
+  # Lets the in-app "Install Ollama" action run `flatpak-spawn --host
+  # pkexec sh -s` so the host's PolicyKit agent can prompt for a password
+  # and install Ollama outside the sandbox. The app fetches the install
+  # script itself over --share=network and only pipes the already-fetched
+  # text to the privileged host process; it does not grant filesystem or
+  # process access beyond this one D-Bus name.
+  - --talk-name=org.freedesktop.Flatpak
 
 modules:
   - name: espeak-ng

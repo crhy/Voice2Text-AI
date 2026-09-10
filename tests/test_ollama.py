@@ -4,7 +4,9 @@ import io
 import threading
 from unittest.mock import patch
 
-from voice2text.ollama import OllamaClient
+import pytest
+
+from voice2text.ollama import OllamaClient, OllamaError
 
 
 class FakeResponse(io.BytesIO):
@@ -19,6 +21,59 @@ def test_list_models_sorts_names() -> None:
     response = FakeResponse(b'{"models":[{"name":"zeta"},{"name":"alpha"}]}')
     with patch("urllib.request.urlopen", return_value=response):
         assert OllamaClient().list_models() == ["alpha", "zeta"]
+
+
+def test_list_models_detailed_returns_sizes_sorted_by_name() -> None:
+    response = FakeResponse(
+        b'{"models":[{"name":"zeta","size":2000},{"name":"alpha","size":1000}]}'
+    )
+    with patch("urllib.request.urlopen", return_value=response):
+        infos = OllamaClient().list_models_detailed()
+    assert [(info.name, info.size_bytes) for info in infos] == [("alpha", 1000), ("zeta", 2000)]
+
+
+def test_pull_model_reports_progress_and_stops_on_success() -> None:
+    response = FakeResponse(
+        b'{"status":"pulling manifest"}\n'
+        b'{"status":"downloading","completed":50,"total":100}\n'
+        b'{"status":"success"}\n'
+    )
+    events: list[tuple[str, int, int]] = []
+    with patch("urllib.request.urlopen", return_value=response):
+        OllamaClient().pull_model(
+            "qwen2.5:0.5b",
+            cancel_event=threading.Event(),
+            on_progress=lambda status, completed, total: events.append((status, completed, total)),
+        )
+    assert events == [
+        ("pulling manifest", 0, 0),
+        ("downloading", 50, 100),
+        ("success", 0, 0),
+    ]
+
+
+def test_pull_model_raises_on_stream_error() -> None:
+    response = FakeResponse(b'{"error":"model not found"}\n')
+    with patch("urllib.request.urlopen", return_value=response), pytest.raises(OllamaError):
+        OllamaClient().pull_model(
+            "does-not-exist",
+            cancel_event=threading.Event(),
+            on_progress=lambda *_args: None,
+        )
+
+
+def test_pull_model_rejects_blank_name() -> None:
+    with pytest.raises(OllamaError):
+        OllamaClient().pull_model("  ", cancel_event=threading.Event(), on_progress=lambda *_args: None)
+
+
+def test_delete_model_sends_request() -> None:
+    response = FakeResponse(b"")
+    with patch("urllib.request.urlopen", return_value=response) as mocked:
+        OllamaClient().delete_model("qwen2.5:0.5b")
+    request = mocked.call_args[0][0]
+    assert request.get_method() == "DELETE"
+    assert request.full_url.endswith("/api/delete")
 
 
 def test_streaming_response_calls_chunk_callback() -> None:
