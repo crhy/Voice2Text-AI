@@ -46,7 +46,14 @@ jobs:
           build-bundle: false
           upload-artifact: false
           cache-key: flatpak-builder-${{ github.sha }}
-          mirror-screenshots-url: https://dl.flathub.org/media
+          # Do NOT mirror screenshots to https://dl.flathub.org/media. That
+          # option rewrites every screenshot URL in the exported AppStream to
+          # Flathub's media CDN, but this application is published to the
+          # Spaced Linux `spaced-github` repository rather than to Flathub, so
+          # nothing is ever uploaded to those paths. The rewritten URLs
+          # returned 404 and SpacedBazaar showed the app with no screenshots
+          # at all (crhy/spaced#181). Leaving it unset keeps the raw
+          # githubusercontent URLs declared in the metainfo, which resolve.
       - name: Create updateable release bundle
         run: >-
           flatpak build-bundle
