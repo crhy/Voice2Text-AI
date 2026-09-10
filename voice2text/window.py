@@ -13,7 +13,7 @@ from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .config import ConfigStore  # noqa: E402
 from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
-from .hardware import detect_available_model_memory_gb, suggest_models  # noqa: E402
+from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError  # noqa: E402
 from .speech import SpeechService  # noqa: E402
@@ -25,6 +25,7 @@ WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
 # larger) model the user picked for real dictation — that one only has to
 # run once per turn, after the wake word is actually heard.
 WAKE_WHISPER_MODEL = "tiny"
+GPU_POLL_INTERVAL_SECONDS = 0.75
 APPEARANCE_VALUES = ["system", "light", "dark"]
 APPEARANCE_LABELS = ["System", "Light", "Dark"]
 TTS_VOICES = [
@@ -99,6 +100,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._suggested_models: list[str] = []
         self._install_cancel = threading.Event()
         self._installing = False
+        self._has_gpu = False
+        self._gpu_poll_stop: threading.Event | None = None
 
         self._build_ui()
         self._install_actions()
@@ -170,8 +173,24 @@ class MainWindow(Adw.ApplicationWindow):
         self.level.set_value(0)
         self.level.set_size_request(150, -1)
         self.level.set_tooltip_text("Microphone level")
+
+        self.gpu_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.gpu_box.set_visible(False)
+        gpu_caption = Gtk.Label(label="GPU")
+        gpu_caption.add_css_class("dim-label")
+        self.gpu_level = Gtk.LevelBar()
+        self.gpu_level.set_min_value(0)
+        self.gpu_level.set_max_value(100)
+        self.gpu_level.set_size_request(80, -1)
+        self.gpu_label = Gtk.Label(label="0%")
+        self.gpu_label.set_width_chars(4)
+        self.gpu_box.append(gpu_caption)
+        self.gpu_box.append(self.gpu_level)
+        self.gpu_box.append(self.gpu_label)
+
         self.status_box.append(self.status_spinner)
         self.status_box.append(self.status_label)
+        self.status_box.append(self.gpu_box)
         self.status_box.append(self.level)
         root.append(self.status_box)
         self._install_status_css()
@@ -364,6 +383,45 @@ class MainWindow(Adw.ApplicationWindow):
         self._suggested_models = [model.name for model in suggestions]
         names = ", ".join(self._suggested_models)
         self._hardware_summary = f"Suggested for this machine (~{available_gb:.0f} GB {source}): {names}"
+        self._has_gpu = source == "GPU VRAM"
+        return False
+
+    def _start_gpu_monitor(self) -> None:
+        # Only meaningful while the GPU is actually doing something worth
+        # watching, so callers start/stop this around an Ollama request
+        # rather than polling nvidia-smi for the app's whole lifetime.
+        if not self._has_gpu or self._gpu_poll_stop is not None:
+            return
+        stop_event = threading.Event()
+        self._gpu_poll_stop = stop_event
+
+        def worker() -> None:
+            # Sample immediately (off the UI thread) so the gauge doesn't sit
+            # at 0% for a full interval before its first real reading.
+            while True:
+                usage = sample_gpu_usage()
+                if usage is not None and not stop_event.is_set():
+                    idle(self._apply_gpu_usage, usage)
+                if stop_event.wait(GPU_POLL_INTERVAL_SECONDS):
+                    break
+
+        threading.Thread(target=worker, name="gpu-monitor", daemon=True).start()
+        self.gpu_box.set_visible(True)
+
+    def _stop_gpu_monitor(self) -> None:
+        if self._gpu_poll_stop is not None:
+            self._gpu_poll_stop.set()
+            self._gpu_poll_stop = None
+        self.gpu_box.set_visible(False)
+        self.gpu_level.set_value(0)
+
+    def _apply_gpu_usage(self, usage: GpuUsage) -> bool:
+        self.gpu_level.set_value(usage.utilization_percent)
+        self.gpu_label.set_text(f"{usage.utilization_percent:.0f}%")
+        self.gpu_box.set_tooltip_text(
+            f"{usage.utilization_percent:.0f}% utilization — "
+            f"{usage.memory_used_gb:.1f} / {usage.memory_total_gb:.1f} GB VRAM"
+        )
         return False
 
     def _apply_ollama_models(self, models: list[str]) -> bool:
@@ -972,6 +1030,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._set_text(self.response_view, "")
         self.ask_button.set_sensitive(False)
         self._set_status(f"Asking {model}…", busy=True)
+        self._start_gpu_monitor()
 
         # Batch streamed chunks so the main loop schedules at most one idle
         # callback per batch instead of one per token chunk.
@@ -1022,6 +1081,7 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event):
             return False
         self.ask_button.set_sensitive(True)
+        self._stop_gpu_monitor()
         if cancel_event.is_set():
             self._set_status("AI request stopped.")
             return False
@@ -1038,6 +1098,7 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event) or cancel_event.is_set():
             return False
         self.ask_button.set_sensitive(True)
+        self._stop_gpu_monitor()
         self._toast(error)
         self._set_status(self._conversation_idle_status() if self.conversation_active else "AI request failed.")
         return False
@@ -1071,6 +1132,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._install_cancel.set()
         self.query_cancel.set()
         self._query_generation += 1
+        self._stop_gpu_monitor()
         self.speech.stop()
         self.ask_button.set_sensitive(True)
         self._set_status("Stopped.")

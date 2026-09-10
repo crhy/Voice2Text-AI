@@ -7,6 +7,7 @@ from unittest.mock import patch
 from voice2text.hardware import (
     detect_gpu_vram_gb,
     detect_system_ram_gb,
+    sample_gpu_usage,
     suggest_models,
 )
 
@@ -40,3 +41,24 @@ def test_detect_system_ram_gb_parses_meminfo(tmp_path: Path) -> None:
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemTotal:       16777216 kB\nMemFree:        1000 kB\n", encoding="utf-8")
     assert detect_system_ram_gb(meminfo) == 16.0
+
+
+def test_sample_gpu_usage_parses_nvidia_smi_csv_line() -> None:
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="37, 4096, 24576\n", stderr="")
+    with patch("subprocess.run", return_value=fake):
+        usage = sample_gpu_usage()
+    assert usage is not None
+    assert usage.utilization_percent == 37.0
+    assert usage.memory_used_gb == 4.0
+    assert usage.memory_total_gb == 24.0
+
+
+def test_sample_gpu_usage_returns_none_when_no_tool_is_available() -> None:
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        assert sample_gpu_usage() is None
+
+
+def test_sample_gpu_usage_returns_none_on_malformed_output() -> None:
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="not,a,number\n", stderr="")
+    with patch("subprocess.run", return_value=fake):
+        assert sample_gpu_usage() is None

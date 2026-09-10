@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -110,6 +111,83 @@ def detect_system_ram_gb(meminfo_path: Path = Path("/proc/meminfo")) -> float | 
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+@dataclass(slots=True, frozen=True)
+class GpuUsage:
+    utilization_percent: float
+    memory_used_gb: float
+    memory_total_gb: float
+
+
+def sample_gpu_usage() -> GpuUsage | None:
+    """One-shot GPU utilization + VRAM sample, or None if no GPU tool is available.
+
+    Cheap enough to poll every second or so from a background thread — each
+    call is a single subprocess invocation, not a persistent connection.
+    """
+    for probe in (_nvidia_gpu_usage, _rocm_gpu_usage):
+        usage = probe()
+        if usage is not None:
+            return usage
+    return None
+
+
+def _nvidia_gpu_usage() -> GpuUsage | None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    line = next((line for line in result.stdout.splitlines() if line.strip()), "")
+    parts = [part.strip() for part in line.split(",")]
+    if len(parts) != 3:
+        return None
+    try:
+        util, used_mib, total_mib = (float(part) for part in parts)
+    except ValueError:
+        return None
+    return GpuUsage(utilization_percent=util, memory_used_gb=used_mib / 1024.0, memory_total_gb=total_mib / 1024.0)
+
+
+def _rocm_gpu_usage() -> GpuUsage | None:
+    try:
+        result = subprocess.run(
+            ["rocm-smi", "--showuse", "--showmeminfo", "vram", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    card = next(iter(payload.values()), None) if isinstance(payload, dict) else None
+    if not isinstance(card, dict):
+        return None
+    try:
+        util = float(card["GPU use (%)"])
+        used_bytes = float(card["VRAM Total Used Memory (B)"])
+        total_bytes = float(card["VRAM Total Memory (B)"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return GpuUsage(
+        utilization_percent=util,
+        memory_used_gb=used_bytes / (1024.0**3),
+        memory_total_gb=total_bytes / (1024.0**3),
+    )
 
 
 def detect_available_model_memory_gb() -> tuple[float, str]:

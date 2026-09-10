@@ -15,7 +15,8 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
 - **On-device dictation** — microphone audio is transcribed locally by Faster
   Whisper (nothing leaves your machine).
 - **Local AI prompts** — send the transcript to any Ollama model you have
-  pulled, with streaming responses.
+  pulled, with streaming responses and a live GPU utilization gauge while
+  it's thinking (NVIDIA and AMD).
 - **Natural speech output** — Edge TTS voices stream immediately; if the
   network voice is unavailable, eSpeak NG speaks offline automatically.
 - **Adaptive segmentation** — speech is split at pauses, so dictation flows
