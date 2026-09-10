@@ -11,6 +11,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .config import ConfigStore  # noqa: E402
+from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
 from .ollama import OllamaClient, OllamaError  # noqa: E402
 from .speech import SpeechService  # noqa: E402
@@ -77,6 +78,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.speech = SpeechService()
         self.dictation: DictationController | None = None
         self.listening = False
+        self.conversation: ConversationController | None = None
+        self.conversation_active = False
         self.query_cancel = threading.Event()
         self.devices: list[AudioDevice] = []
         self.ollama_models: list[str] = []
@@ -104,6 +107,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.record_button.set_tooltip_text("Start or stop dictation (Ctrl+R)")
         self.record_button.connect("toggled", self._on_record_toggled)
         header.pack_start(self.record_button)
+
+        self.conversation_button = Gtk.ToggleButton(label="Conversation")
+        self.conversation_button.set_tooltip_text(
+            "Actively listen for the wake word, then transcribe and ask AI automatically (Ctrl+Shift+R)"
+        )
+        self.conversation_button.connect("toggled", self._on_conversation_toggled)
+        header.pack_start(self.conversation_button)
 
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
@@ -214,6 +224,7 @@ class MainWindow(Adw.ApplicationWindow):
             "preferences": self.show_preferences,
             "shortcuts": self.show_shortcuts,
             "record": self.toggle_recording,
+            "conversation": self.toggle_conversation,
             "ask": self.ask_ai,
             "copy": self.copy_transcript,
             "clear": self.clear_all,
@@ -224,6 +235,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.add_action(action)
         app = self.get_application()
         app.set_accels_for_action("win.record", ["<Control>r"])
+        app.set_accels_for_action("win.conversation", ["<Control><Shift>r"])
         app.set_accels_for_action("win.ask", ["<Control>Return"])
         app.set_accels_for_action("win.copy", ["<Control><Shift>c"])
         app.set_accels_for_action("win.clear", ["<Control>l"])
@@ -355,6 +367,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.record_button.set_active(False)
             self._toast("No microphone is available.")
             return
+        if self.conversation_active:
+            self.stop_conversation_mode()
 
         self.dictation = DictationController(
             self.whisper,
@@ -387,6 +401,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._start_level_updates()
         self.record_button.set_label("Stop")
         self.record_button.add_css_class("destructive-action")
+        self.conversation_button.set_sensitive(False)
         self._set_status("Listening…", busy=True)
 
     def stop_recording(self) -> None:
@@ -400,6 +415,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.record_button.remove_css_class("destructive-action")
         if self.record_button.get_active():
             self.record_button.set_active(False)
+        self.conversation_button.set_sensitive(True)
         self.level.set_value(0)
         self._set_status("Ready")
 
@@ -411,6 +427,122 @@ class MainWindow(Adw.ApplicationWindow):
     def _capture_error(self, error: str) -> bool:
         self.stop_recording()
         self._toast(f"Microphone error: {error}")
+        return False
+
+    def _on_conversation_toggled(self, button: Gtk.ToggleButton) -> None:
+        if button.get_active() and not self.conversation_active:
+            self.start_conversation_mode()
+        elif not button.get_active() and self.conversation_active:
+            self.stop_conversation_mode()
+
+    def toggle_conversation(self) -> None:
+        self.conversation_button.set_active(not self.conversation_button.get_active())
+
+    def start_conversation_mode(self) -> None:
+        if not self.whisper.ready:
+            self.conversation_button.set_active(False)
+            self._toast("Whisper is still loading.")
+            return
+        if not self.devices:
+            self.conversation_button.set_active(False)
+            self._toast("No microphone is available.")
+            return
+        if self.listening:
+            self.stop_recording()
+
+        self.conversation = ConversationController(
+            self.whisper,
+            language=self.settings.language,
+            wake_word=self.settings.wake_word,
+            threshold=self.settings.voice_threshold,
+            silence_ms=self.settings.silence_ms,
+            max_segment_seconds=self.settings.max_segment_seconds,
+            on_woken=lambda: idle(self._on_conversation_woken),
+            on_prompt=lambda text: idle(self._on_conversation_prompt, text),
+            on_status=lambda text: idle(self._set_status, text, True),
+            on_error=lambda text: idle(self._toast, text),
+        )
+        self.conversation.start()
+        try:
+            self.audio.start(
+                self.settings.microphone_id,
+                self.conversation.feed,
+                self._queue_level,
+                lambda error: idle(self._conversation_capture_error, error),
+            )
+        except Exception as exc:  # noqa: BLE001 - platform boundary
+            self.conversation.stop()
+            self.conversation = None
+            self.conversation_button.set_active(False)
+            self._toast(str(exc))
+            return
+
+        self.conversation_active = True
+        self._latest_level = 0.0
+        self._start_level_updates()
+        self.conversation_button.set_label("Stop listening")
+        self.conversation_button.add_css_class("destructive-action")
+        self.record_button.set_sensitive(False)
+        self._set_status(f"Conversation mode — say “{self.settings.wake_word}” to begin", busy=True)
+
+    def stop_conversation_mode(self) -> None:
+        self.audio.stop()
+        if self.conversation is not None:
+            self.conversation.stop()
+            self.conversation = None
+        self.conversation_active = False
+        self._stop_level_updates()
+        self.conversation_button.set_label("Conversation")
+        self.conversation_button.remove_css_class("destructive-action")
+        if self.conversation_button.get_active():
+            self.conversation_button.set_active(False)
+        self.record_button.set_sensitive(True)
+        self.level.set_value(0)
+        self._set_status("Ready")
+
+    def _conversation_capture_error(self, error: str) -> bool:
+        self.stop_conversation_mode()
+        self._toast(f"Microphone error: {error}")
+        return False
+
+    def _on_conversation_woken(self) -> bool:
+        self._toast(f"Heard “{self.settings.wake_word}” — listening…")
+        self._set_status("Listening for your request…", busy=True)
+        return False
+
+    def _on_conversation_prompt(self, text: str) -> bool:
+        if not text:
+            return False
+        self.ask_ai(text)
+        return False
+
+    def _conversation_speak(self, text: str) -> None:
+        if self.conversation is not None:
+            self.conversation.mute()
+        self._set_status("Speaking…", busy=True)
+        self.speech.speak(
+            text,
+            self.settings.tts_rate,
+            self.settings.tts_voice,
+            on_started=lambda: idle(self._set_status, "Speaking…", True),
+            on_done=lambda: idle(self._on_conversation_speech_done),
+            on_error=lambda error: idle(self._on_conversation_speech_error, error),
+        )
+
+    def _conversation_idle_status(self) -> str:
+        return f"Conversation mode — say “{self.settings.wake_word}” to begin" if self.conversation_active else "Ready"
+
+    def _on_conversation_speech_done(self) -> bool:
+        if self.conversation is not None:
+            self.conversation.unmute()
+        self._set_status(self._conversation_idle_status())
+        return False
+
+    def _on_conversation_speech_error(self, error: str) -> bool:
+        if self.conversation is not None:
+            self.conversation.unmute()
+        self._toast(error)
+        self._set_status(self._conversation_idle_status())
         return False
 
     def _on_dictation_status(self, text: str) -> bool:
@@ -464,11 +596,17 @@ class MainWindow(Adw.ApplicationWindow):
     def _stop_dictation_for_action(self) -> None:
         """Stop microphone capture before actions that consume or replace text.
 
-        This must run unconditionally: a dictation session can already be
-        producing results while ``self.listening`` is not yet set.
-        ``stop_recording`` is idempotent, so an idle call is harmless.
+        Skipped while conversation mode owns the shared ``self.audio``
+        pipeline (dictation and conversation mode are mutually exclusive, so
+        there is never a dictation session to stop in that case) — otherwise
+        this would tear down the mic capture conversation mode itself needs,
+        since ``ask_ai`` runs this on every automatic conversation turn.
+        Otherwise it must run unconditionally: a dictation session can
+        already be producing results while ``self.listening`` is not yet
+        set. ``stop_recording`` is idempotent, so an idle call is harmless.
         """
-        self.stop_recording()
+        if not self.conversation_active:
+            self.stop_recording()
 
     def copy_transcript(self) -> None:
         self._stop_dictation_for_action()
@@ -490,9 +628,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._set_text(self.response_view, "")
         self._set_status("Ready")
 
-    def ask_ai(self) -> None:
+    def ask_ai(self, prompt: str | None = None) -> None:
         self._stop_dictation_for_action()
-        prompt = self._get_text(self.transcript_view)
+        if prompt is None:
+            prompt = self._get_text(self.transcript_view)
+        else:
+            self._set_text(self.transcript_view, prompt)
         if not prompt:
             self._toast("Speak or type something first.")
             return
@@ -564,7 +705,9 @@ class MainWindow(Adw.ApplicationWindow):
             self._set_status("AI request stopped.")
             return False
         self._set_status("AI response complete.")
-        if answer and self.settings.auto_speak:
+        if answer and self.conversation_active:
+            self._conversation_speak(answer)
+        elif answer and self.settings.auto_speak:
             self.speak_response()
         return False
 
@@ -574,8 +717,8 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event) or cancel_event.is_set():
             return False
         self.ask_button.set_sensitive(True)
-        self._set_status("AI request failed.")
         self._toast(error)
+        self._set_status(self._conversation_idle_status() if self.conversation_active else "AI request failed.")
         return False
 
     def speak_response(self) -> None:
@@ -601,6 +744,8 @@ class MainWindow(Adw.ApplicationWindow):
     def stop_current_work(self) -> None:
         if self.listening:
             self.stop_recording()
+        if self.conversation_active:
+            self.stop_conversation_mode()
         self.query_cancel.set()
         self._query_generation += 1
         self.speech.stop()
@@ -707,6 +852,15 @@ class MainWindow(Adw.ApplicationWindow):
         auto_speak_row.set_active(self.settings.auto_speak)
         ai_group.add(auto_speak_row)
 
+        conversation_group = Adw.PreferencesGroup(
+            title="Conversation mode",
+            description="Say the wake word to start talking, then ask something — it's transcribed and sent to the Ollama model above automatically.",
+        )
+        page.add(conversation_group)
+        wake_word_row = Adw.EntryRow(title="Wake word")
+        wake_word_row.set_text(self.settings.wake_word)
+        conversation_group.add(wake_word_row)
+
         voice_group = Adw.PreferencesGroup(title="Speech output")
         page.add(voice_group)
         voice_row = Adw.ComboRow(
@@ -733,6 +887,7 @@ class MainWindow(Adw.ApplicationWindow):
             ai_row,
             endpoint_row,
             auto_speak_row,
+            wake_word_row,
             voice_row,
             rate_row,
         )
@@ -747,6 +902,7 @@ class MainWindow(Adw.ApplicationWindow):
         ai_row,
         endpoint_row,
         auto_speak_row,
+        wake_word_row,
         voice_row,
         rate_row,
     ) -> None:
@@ -759,6 +915,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.settings.ollama_model = self.ollama_models[min(ai_row.get_selected(), len(self.ollama_models) - 1)]
         self.settings.ollama_url = endpoint_row.get_text().strip()
         self.settings.auto_speak = auto_speak_row.get_active()
+        self.settings.wake_word = wake_word_row.get_text().strip()
         self.settings.appearance = APPEARANCE_VALUES[appearance_row.get_selected()]
         self.settings.tts_voice = TTS_VOICES[voice_row.get_selected()][1]
         self.settings.tts_rate = int(rate_row.get_value())
@@ -782,6 +939,7 @@ class MainWindow(Adw.ApplicationWindow):
                       <object class="GtkShortcutsGroup">
                         <property name="title">Actions</property>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Start or stop dictation</property><property name="accelerator">&lt;Control&gt;r</property></object></child>
+                        <child><object class="GtkShortcutsShortcut"><property name="title">Start or stop conversation mode</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;r</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Ask AI</property><property name="accelerator">&lt;Control&gt;Return</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Copy transcript</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;c</property></object></child>
                         <child><object class="GtkShortcutsShortcut"><property name="title">Clear</property><property name="accelerator">&lt;Control&gt;l</property></object></child>

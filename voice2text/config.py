@@ -23,6 +23,7 @@ class Settings:
     silence_ms: int = 900
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
+    wake_word: str = "computer"
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -34,6 +35,7 @@ class Settings:
         self.max_segment_seconds = max(2.0, min(20.0, float(self.max_segment_seconds)))
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
+        self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
         return self
 
 

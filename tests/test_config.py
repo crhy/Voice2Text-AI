@@ -38,3 +38,10 @@ def test_appearance_and_voice_are_normalized(tmp_path: Path) -> None:
     loaded = store.load()
     assert loaded.appearance == "system"
     assert loaded.tts_voice == "en-US-AriaNeural"
+
+
+def test_wake_word_falls_back_to_default_when_blank(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    store.save(Settings(wake_word="   "))
+
+    assert store.load().wake_word == "computer"

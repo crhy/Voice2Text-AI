@@ -3,13 +3,81 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from .transcription import WhisperService
 
 
+def segment_stream(
+    input_queue: queue.Queue[tuple[bytes, float] | None],
+    stop_event: threading.Event,
+    *,
+    threshold: int,
+    silence_seconds: float,
+    max_segment_seconds: float,
+    idle_timeout_seconds: float | None = None,
+    on_idle_timeout: Callable[[], None] | None = None,
+) -> Iterator[bytes]:
+    """Yield PCM segments split at speech pauses from a live audio queue.
+
+    Pulls ``(pcm, level)`` pairs fed by an audio capture callback and yields
+    a complete segment once a pause (or the max segment length) is reached.
+    If ``idle_timeout_seconds`` elapses with no speech at all, ``on_idle_timeout``
+    fires and the generator ends (without touching ``stop_event``, so callers
+    decide what ending idle means for them).
+    """
+    segment = bytearray()
+    heard_voice = False
+    last_voice = time.monotonic()
+    last_any_voice = last_voice
+
+    while not stop_event.is_set():
+        try:
+            item = input_queue.get(timeout=0.25)
+        except queue.Empty:
+            item = None
+        now = time.monotonic()
+
+        if item is None:
+            if stop_event.is_set():
+                break
+        else:
+            pcm, level = item
+            segment.extend(pcm)
+            if level >= threshold:
+                heard_voice = True
+                last_voice = now
+                last_any_voice = now
+
+        duration = len(segment) / (16000 * 2)
+        # Require a little recorded content before treating a pause as a
+        # boundary; scale it with the silence setting so short pauses cut
+        # sooner instead of accumulating toward the max-segment cutoff.
+        min_content = min(0.8, max(0.3, silence_seconds / 2.0))
+        pause_ready = heard_voice and duration >= min_content and now - last_voice >= silence_seconds
+        max_ready = heard_voice and duration >= max_segment_seconds
+        if pause_ready or max_ready:
+            yield bytes(segment)
+            segment = bytearray()
+            heard_voice = False
+            last_voice = now
+
+        if not heard_voice and duration > 2.0:
+            segment = bytearray()
+
+        if idle_timeout_seconds is not None and now - last_any_voice > idle_timeout_seconds:
+            if on_idle_timeout is not None:
+                on_idle_timeout()
+            return
+
+    if heard_voice and segment:
+        yield bytes(segment)
+
+
 class DictationController:
     """Segments live PCM around speech pauses and transcribes off the UI thread."""
+
+    IDLE_TIMEOUT_SECONDS = 15.0
 
     def __init__(
         self,
@@ -64,61 +132,28 @@ class DictationController:
         except queue.Full:
             pass
 
+    def _on_idle_timeout(self) -> None:
+        self.on_status("No speech detected; dictation stopped.")
+        self.on_auto_stop()
+
     def _run(self) -> None:
-        segment = bytearray()
-        heard_voice = False
-        last_voice = time.monotonic()
-        last_any_voice = last_voice
-
-        while not self.stop_event.is_set():
-            try:
-                item = self.queue.get(timeout=0.25)
-            except queue.Empty:
-                item = None
-            now = time.monotonic()
-
-            if item is None:
-                if self.stop_event.is_set():
-                    break
-            else:
-                pcm, level = item
-                segment.extend(pcm)
-                if level >= self.threshold:
-                    heard_voice = True
-                    last_voice = now
-                    last_any_voice = now
-
-            duration = len(segment) / (16000 * 2)
-            # Require a little recorded content before treating a pause as a
-            # boundary; scale it with the silence setting so short pauses cut
-            # sooner instead of accumulating toward the max-segment cutoff.
-            min_content = min(0.8, max(0.3, self.silence_seconds / 2.0))
-            pause_ready = heard_voice and duration >= min_content and now - last_voice >= self.silence_seconds
-            max_ready = heard_voice and duration >= self.max_segment_seconds
-            if pause_ready or max_ready:
-                self._flush(segment)
-                segment = bytearray()
-                heard_voice = False
-                last_voice = now
-
-            if not heard_voice and duration > 2.0:
-                segment = bytearray()
-
-            if now - last_any_voice > 15.0:
-                self.on_status("No speech detected; dictation stopped.")
-                self.on_auto_stop()
-                self.stop_event.set()
-                break
-
-        if heard_voice and segment:
+        for segment in segment_stream(
+            self.queue,
+            self.stop_event,
+            threshold=self.threshold,
+            silence_seconds=self.silence_seconds,
+            max_segment_seconds=self.max_segment_seconds,
+            idle_timeout_seconds=self.IDLE_TIMEOUT_SECONDS,
+            on_idle_timeout=self._on_idle_timeout,
+        ):
             self._flush(segment)
 
-    def _flush(self, segment: bytearray) -> None:
+    def _flush(self, segment: bytes) -> None:
         if not segment:
             return
         self.on_status("Transcribing…")
         try:
-            text = self.whisper.transcribe(bytes(segment), self.language)
+            text = self.whisper.transcribe(segment, self.language)
             if text:
                 self.on_text(text)
         except Exception as exc:  # noqa: BLE001 - worker boundary
