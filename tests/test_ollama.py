@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from voice2text.ollama import OllamaClient, OllamaError
+from voice2text.ollama import OllamaClient, OllamaError, strip_reasoning
 
 
 class FakeResponse(io.BytesIO):
@@ -92,3 +92,22 @@ def test_streaming_response_calls_chunk_callback() -> None:
         )
     assert answer == "Hello world"
     assert chunks == ["Hello", " world"]
+
+
+def test_strip_reasoning_removes_a_matched_think_block():
+    assert strip_reasoning("<think>weighing it up</think>\n\nGNOME.") == "GNOME."
+
+
+def test_strip_reasoning_handles_an_unopened_closing_tag():
+    # What Ollama actually served for a Qwen3 GGUF: the opening tag was already
+    # consumed by the chat template, leaving the scratchpad bare.
+    reply = 'We need answer user. Simple. Need final concise.\n</think>\n\nGNOME, KDE Plasma, and XFCE.'
+    assert strip_reasoning(reply) == "GNOME, KDE Plasma, and XFCE."
+
+
+def test_strip_reasoning_leaves_an_ordinary_reply_alone():
+    assert strip_reasoning("GNOME, KDE Plasma, and XFCE.") == "GNOME, KDE Plasma, and XFCE."
+
+
+def test_strip_reasoning_keeps_the_last_answer_when_several_blocks_appear():
+    assert strip_reasoning("<think>a</think>mid</think>final") == "final"

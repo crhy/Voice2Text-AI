@@ -15,7 +15,7 @@ from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
-from .ollama import OllamaClient, OllamaError  # noqa: E402
+from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
 
@@ -1086,8 +1086,16 @@ class MainWindow(Adw.ApplicationWindow):
             self._set_status("AI request stopped.")
             return False
         self._set_status("AI response complete.")
-        if answer and self.conversation_active:
-            self._conversation_speak(answer)
+        # A thinking model streams its scratchpad in with the reply. Replace
+        # what was streamed with just the answer, so the chain of thought is
+        # neither left on screen nor read aloud in conversation mode.
+        spoken = strip_reasoning(answer)
+        if spoken != answer:
+            buffer = self.response_view.get_buffer()
+            buffer.set_text(spoken)
+            self._scroll_to_end(self.response_view)
+        if spoken and self.conversation_active:
+            self._conversation_speak(spoken)
         elif answer and self.settings.auto_speak:
             self.speak_response()
         return False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -10,6 +11,24 @@ from dataclasses import dataclass
 
 class OllamaError(RuntimeError):
     pass
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def strip_reasoning(text: str) -> str:
+    """Drop a reasoning model's scratchpad from its reply.
+
+    Qwen3, DeepSeek-R1 and other thinking models wrap their working in
+    <think>...</think>. Ollama serves some GGUF builds with the opening tag
+    already consumed by the chat template, leaving a bare closing tag, so
+    anything ahead of the last </think> is treated as reasoning rather than
+    insisting on a matched pair. Text with no closing tag is left alone.
+    """
+    cleaned = _THINK_BLOCK.sub("", text)
+    if "</think>" in cleaned:
+        cleaned = cleaned.rsplit("</think>", 1)[1]
+    return cleaned.strip()
 
 
 @dataclass(slots=True, frozen=True)
