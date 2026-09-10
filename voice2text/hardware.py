@@ -46,13 +46,13 @@ def suggest_models(available_gb: float, *, limit: int = 3) -> list[ModelSuggesti
     return list(reversed(fitting))[:limit]
 
 
-def detect_gpu_vram_gb() -> float | None:
+def detect_gpu_vram_gb(sysfs_base: Path = Path("/sys/class/drm")) -> float | None:
     """Best-effort total VRAM in GB for the most capable GPU, or None if undetectable."""
-    for probe in (_nvidia_vram_gb, _rocm_vram_gb, _sysfs_amdgpu_vram_gb):
+    for probe in (_nvidia_vram_gb, _rocm_vram_gb):
         vram = probe()
         if vram is not None:
             return vram
-    return None
+    return _sysfs_amdgpu_vram_gb(sysfs_base)
 
 
 def _nvidia_vram_gb() -> float | None:

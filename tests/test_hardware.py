@@ -32,9 +32,9 @@ def test_detect_gpu_vram_gb_parses_nvidia_smi_output() -> None:
         assert detect_gpu_vram_gb() == 24.0
 
 
-def test_detect_gpu_vram_gb_returns_none_when_no_tool_is_available() -> None:
+def test_detect_gpu_vram_gb_returns_none_when_no_tool_is_available(tmp_path: Path) -> None:
     with patch("subprocess.run", side_effect=FileNotFoundError):
-        assert detect_gpu_vram_gb() is None
+        assert detect_gpu_vram_gb(sysfs_base=tmp_path) is None
 
 
 def test_detect_system_ram_gb_parses_meminfo(tmp_path: Path) -> None:
