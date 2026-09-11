@@ -14,16 +14,24 @@ class ModelSuggestion:
     description: str
 
 
-# Approximate default-quantization download size for each tag, in GB. Used
-# only to rank suggestions, not as an exact figure.
+# Approximate default-quantization weight size for each tag, in GB, smallest
+# first. Used only to rank suggestions, not as an exact figure, and kept at or
+# just above the real size so the headroom rule below stays conservative.
+# catalog.refresh_catalog() re-measures these against Ollama's registry.
 MODEL_CATALOG: tuple[ModelSuggestion, ...] = (
     ModelSuggestion("qwen2.5:0.5b", 0.4, "Fastest, runs on almost anything"),
+    ModelSuggestion("gemma3:1b", 0.8, "Very small, still writes coherently"),
     ModelSuggestion("qwen2.5:1.5b", 1.0, "Very fast, good for low-memory devices"),
     ModelSuggestion("llama3.2:3b", 2.0, "Good balance for laptops without a GPU"),
+    ModelSuggestion("qwen3.5:2b", 2.6, "Newer generation, small enough for a laptop"),
+    ModelSuggestion("qwen3.5:4b", 3.2, "Newer generation, good on modest hardware"),
     ModelSuggestion("qwen2.5:7b", 4.7, "Strong general-purpose model"),
     ModelSuggestion("llama3.1:8b", 4.9, "Strong general-purpose model"),
+    ModelSuggestion("qwen3.5:9b", 6.2, "Newer generation, strong for its size"),
     ModelSuggestion("qwen2.5:14b", 9.0, "Noticeably smarter, wants a mid-range GPU"),
+    ModelSuggestion("qwen3.8:27b", 15.7, "Latest generation, wants a 24GB GPU"),
     ModelSuggestion("qwen2.5:32b", 20.0, "High quality, wants a 24GB+ GPU"),
+    ModelSuggestion("qwen3.5:35b", 22.3, "Newer generation at the top end, wants 30GB+"),
     ModelSuggestion("llama3.1:70b", 40.0, "Top quality, wants multiple GPUs or a lot of unified memory"),
 )
 
@@ -38,11 +46,17 @@ def _fits(available_gb: float, model: ModelSuggestion) -> bool:
     return available_gb >= model.approx_gb * _HEADROOM_FACTOR + _HEADROOM_FLOOR_GB
 
 
-def suggest_models(available_gb: float, *, limit: int = 3) -> list[ModelSuggestion]:
+def suggest_models(
+    available_gb: float,
+    *,
+    limit: int = 3,
+    catalog: tuple[ModelSuggestion, ...] | None = None,
+) -> list[ModelSuggestion]:
     """Return up to ``limit`` catalog models that fit in ``available_gb``, best first."""
-    fitting = [model for model in MODEL_CATALOG if _fits(available_gb, model)]
+    entries = catalog or MODEL_CATALOG
+    fitting = [model for model in entries if _fits(available_gb, model)]
     if not fitting:
-        return [MODEL_CATALOG[0]]
+        return [entries[0]]
     return list(reversed(fitting))[:limit]
 
 

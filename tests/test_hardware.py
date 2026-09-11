@@ -13,8 +13,9 @@ from voice2text.hardware import (
 
 
 def test_suggest_models_picks_largest_that_fits() -> None:
+    # 6GB clears qwen3.5:4b at 3.2 * 1.3 + 1 = 5.2 but not qwen2.5:7b at 7.1.
     names = [model.name for model in suggest_models(6.0)]
-    assert names[0] == "llama3.2:3b"
+    assert names[0] == "qwen3.5:4b"
 
 
 def test_suggest_models_falls_back_to_smallest_when_nothing_fits() -> None:

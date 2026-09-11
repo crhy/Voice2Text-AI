@@ -10,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .audio import AudioCapture, AudioDevice  # noqa: E402
+from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refresh_due  # noqa: E402
 from .config import ConfigStore  # noqa: E402
 from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
@@ -374,8 +375,28 @@ class MainWindow(Adw.ApplicationWindow):
     def _detect_hardware_async(self) -> None:
         def worker() -> None:
             available_gb, source = detect_available_model_memory_gb()
-            suggestions = suggest_models(available_gb)
-            idle(self._apply_hardware_summary, available_gb, source, suggestions)
+            # Show something immediately from the built-in or cached catalog,
+            # so the suggestion never waits on the network.
+            catalog = load_catalog()
+            idle(
+                self._apply_hardware_summary,
+                available_gb,
+                source,
+                suggest_models(available_gb, catalog=catalog),
+            )
+            if not refresh_due():
+                return
+            try:
+                refreshed = refresh_and_cache()
+            except CatalogUnavailable:
+                return  # Offline, or the registry is down; the cache still stands.
+            if refreshed != catalog:
+                idle(
+                    self._apply_hardware_summary,
+                    available_gb,
+                    source,
+                    suggest_models(available_gb, catalog=refreshed),
+                )
 
         threading.Thread(target=worker, name="hardware-detect", daemon=True).start()
 
