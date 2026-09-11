@@ -165,3 +165,35 @@ def test_saving_to_an_unwritable_location_is_not_fatal(tmp_path):
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
     CatalogCache(blocker / "catalog.json").save((ModelSuggestion("x:1b", 1.0, "d"),))
+
+
+def test_a_curated_model_is_preferred_over_a_slightly_larger_discovered_one():
+    from voice2text.hardware import suggest_models
+
+    curated = (ModelSuggestion("qwen2.5:14b", 9.0, "Curated"),)
+    # phi4:14b is 9.1GB against qwen2.5:14b's 9.0: larger, but only just.
+    page = _page(_tag_block("qwen2.5:14b", "9.0GB"), _tag_block("phi4:14b", "9.1GB"))
+    with patch.object(cat, "list_families", lambda **_: ("qwen2.5",)), _with_page(page):
+        result = discover_catalog(catalog=curated)
+    assert suggest_models(16.0, catalog=result)[0].name == "qwen2.5:14b"
+
+
+def test_a_clearly_larger_discovered_model_still_wins():
+    from voice2text.hardware import suggest_models
+
+    curated = (ModelSuggestion("qwen2.5:7b", 4.7, "Curated"),)
+    page = _page(_tag_block("qwen2.5:7b", "4.7GB"), _tag_block("qwen2.5:14b", "9.0GB"))
+    with patch.object(cat, "list_families", lambda **_: ("qwen2.5",)), _with_page(page):
+        result = discover_catalog(catalog=curated)
+    assert suggest_models(16.0, catalog=result)[0].name == "qwen2.5:14b"
+
+
+def test_the_curated_flag_survives_the_cache(tmp_path):
+    cache = CatalogCache(tmp_path / "catalog.json")
+    cache.save(
+        (
+            ModelSuggestion("a:1b", 1.0, "curated", True),
+            ModelSuggestion("b:1b", 1.1, "found", False),
+        )
+    )
+    assert [m.curated for m in cache.load()] == [True, False]

@@ -192,8 +192,10 @@ def discover_catalog(
         if "embedding" in tag.modality.lower():
             continue
         existing = known.get(name)
-        description = existing.description if existing else _describe(tag)
-        merged.append(ModelSuggestion(name, tag.size_gb, description))
+        if existing is not None:
+            merged.append(ModelSuggestion(name, tag.size_gb, existing.description, True))
+        else:
+            merged.append(ModelSuggestion(name, tag.size_gb, _describe(tag), False))
 
     # A curated entry whose family was never reachable is kept rather than
     # silently dropped; one whose family was read and did not list it is gone.
@@ -255,7 +257,10 @@ class CatalogCache:
             try:
                 models.append(
                     ModelSuggestion(
-                        str(row["name"]), float(row["approx_gb"]), str(row["description"])
+                        str(row["name"]),
+                        float(row["approx_gb"]),
+                        str(row["description"]),
+                        bool(row.get("curated", True)),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -267,7 +272,12 @@ class CatalogCache:
         payload = {
             "fetched_at": time.time(),
             "models": [
-                {"name": m.name, "approx_gb": m.approx_gb, "description": m.description}
+                {
+                    "name": m.name,
+                    "approx_gb": m.approx_gb,
+                    "description": m.description,
+                    "curated": m.curated,
+                }
                 for m in catalog
             ],
         }

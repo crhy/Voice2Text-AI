@@ -12,6 +12,10 @@ class ModelSuggestion:
     name: str
     approx_gb: float
     description: str
+    # Curated entries are the deliberately chosen ladder in MODEL_CATALOG;
+    # catalog.discover_catalog() marks anything it finds in the library as
+    # False so a discovered model cannot quietly displace a chosen one.
+    curated: bool = True
 
 
 # Approximate default-quantization weight size for each tag, in GB, smallest
@@ -38,6 +42,10 @@ MODEL_CATALOG: tuple[ModelSuggestion, ...] = (
 # Extra headroom beyond raw model weights for KV cache, activations, and the
 # rest of the OS/desktop, so a suggestion isn't a model that merely fits on
 # disk but chokes the moment inference starts.
+# How far below the largest model that fits a curated one may be and still
+# be preferred to it.
+CURATED_PREFERENCE_BAND = 0.10
+
 _HEADROOM_FACTOR = 1.3
 _HEADROOM_FLOOR_GB = 1.0
 
@@ -57,7 +65,22 @@ def suggest_models(
     fitting = [model for model in entries if _fits(available_gb, model)]
     if not fitting:
         return [entries[0]]
-    return list(reversed(fitting))[:limit]
+    ranked = sorted(fitting, key=lambda model: model.approx_gb, reverse=True)
+    best = ranked[0]
+    if not best.curated:
+        # Size stands in for quality, which is fine for a handful of chosen
+        # models and poor once discovery fills the list with near-identical
+        # ones: a tenth of a gigabyte should not decide that an automatically
+        # found model beats a deliberately chosen one. A curated model within
+        # a short reach of the largest that fits takes the top slot instead.
+        reach = best.approx_gb * (1 - CURATED_PREFERENCE_BAND)
+        preferred = next(
+            (model for model in ranked if model.curated and model.approx_gb >= reach), None
+        )
+        if preferred is not None:
+            ranked.remove(preferred)
+            ranked.insert(0, preferred)
+    return ranked[:limit]
 
 
 def detect_gpu_vram_gb(sysfs_base: Path = Path("/sys/class/drm")) -> float | None:
