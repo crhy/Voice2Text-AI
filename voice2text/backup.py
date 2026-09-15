@@ -632,8 +632,15 @@ def create_backup(
         if chosen not in known_names:
             unknown.append(chosen)
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="v2t-backup-"))
-    plaintext = tmp_dir / "backup.tar.gz"
+    # Stage on the same filesystem as the destination so the final rename
+    # is atomic and never crosses devices (no EXDEV, no double copy of large
+    # model blobs).
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _fd_staged, _staged_name = tempfile.mkstemp(
+        prefix="v2t-backup-", suffix=".tar.gz", dir=str(output_path.parent)
+    )
+    os.close(_fd_staged)
+    plaintext = Path(_staged_name)
     manifest: dict[str, Any] = {
         "format": BACKUP_FORMAT_VERSION,
         "created": _now_iso(),
@@ -686,7 +693,7 @@ def create_backup(
             _encrypt_file(plaintext, encrypted_path, passphrase)
             encrypted = True
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        plaintext.unlink(missing_ok=True)
 
     # Verify after write: re-open, re-hash every stored item against the manifest.
     _verify_archive(output_path, passphrase if encrypted else None, expect_encrypt=encrypted)
