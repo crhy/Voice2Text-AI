@@ -405,12 +405,16 @@ class MainWindow(Adw.ApplicationWindow):
         names = ", ".join(self._suggested_models)
         self._hardware_summary = f"Suggested for this machine (~{available_gb:.0f} GB {source}): {names}"
         self._has_gpu = source == "GPU VRAM"
+        # Keep the gauge live for the app's lifetime once a GPU is detected,
+        # not only while an Ollama query is in flight.
+        if not self.is_destroyed():
+            self._start_gpu_monitor()
         return False
 
     def _start_gpu_monitor(self) -> None:
-        # Only meaningful while the GPU is actually doing something worth
-        # watching, so callers start/stop this around an Ollama request
-        # rather than polling nvidia-smi for the app's whole lifetime.
+        # Runs for the window's lifetime once hardware detection finds a
+        # GPU; the guard below keeps repeated calls (from both detection
+        # and ask_ai) from spawning a second poller.
         if not self._has_gpu or self._gpu_poll_stop is not None:
             return
         stop_event = threading.Event()
@@ -1102,7 +1106,6 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event):
             return False
         self.ask_button.set_sensitive(True)
-        self._stop_gpu_monitor()
         if cancel_event.is_set():
             self._set_status("AI request stopped.")
             return False
@@ -1127,7 +1130,6 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event) or cancel_event.is_set():
             return False
         self.ask_button.set_sensitive(True)
-        self._stop_gpu_monitor()
         self._toast(error)
         self._set_status(self._conversation_idle_status() if self.conversation_active else "AI request failed.")
         return False
@@ -1161,7 +1163,6 @@ class MainWindow(Adw.ApplicationWindow):
             self._install_cancel.set()
         self.query_cancel.set()
         self._query_generation += 1
-        self._stop_gpu_monitor()
         self.speech.stop()
         self.ask_button.set_sensitive(True)
         self._set_status("Stopped.")
@@ -1389,6 +1390,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def do_close_request(self) -> bool:
         self.stop_current_work()
+        self._stop_gpu_monitor()
         self.audio.stop()
         self.config_store.save(self.settings)
         return False
