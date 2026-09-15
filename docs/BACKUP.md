@@ -56,7 +56,7 @@ encryption) — containing:
     archive).
   - `items[]` — every stored file: `key` (archive member name under
     `items/`, mirroring the home-relative layout), `kind` (`config`,
-    `model-manifest`, or `model-blob`), `name`, `path`, `sha256`, `size`,
+    `model_manifest`, or `model_blob`), `name`, `path`, `sha256`, `size`,
     `mtime`, and `redacted_keys` (dotted paths of values that were redacted).
 - `items/...` — the actual files:
   - `items/.config/voice2text-ai/config.json`
@@ -108,7 +108,7 @@ Restore behaviour:
   overwrites newer configuration.
 - Files are written atomically (`<name>.tmp` → verify → rename).
 - `--dry-run` reports what would be restored without touching anything.
-- `--only config,model-manifest,model-blob` restricts by kind (comma list).
+- `--only config,model_manifest,model_blob` restricts by kind (comma list).
 - `--select <model>` (repeatable) restricts to items belonging to that model.
 - `--destination-root DIR` restores under `DIR` instead of your real home
   paths (useful for inspection and for the clean-machine test below).

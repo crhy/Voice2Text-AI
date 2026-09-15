@@ -877,6 +877,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--passphrase-file", help="Read the GPG passphrase from this file (must be 0600).")
     create_parser.add_argument("--passphrase", help="GPG passphrase on the command line (visible; avoid).")
     create_parser.add_argument("--no-hash-blobs", action="store_true", help="Do not compute per-blob SHA-256 (faster).")
+    create_parser.add_argument("--home-dir", help="User home directory to back up (defaults to your real $HOME).")
 
     restore_parser = subparsers.add_parser(
         "restore",
@@ -892,7 +893,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument(
         "--force", action="store_true", help="Overwrite even if the destination is newer than the backup."
     )
-    restore_parser.add_argument("--only", help="Comma-separated kinds: config,model-manifest,model-blob.")
+    restore_parser.add_argument("--only", help="Comma-separated kinds: config,model_manifest,model_blob.")
     restore_parser.add_argument(
         "--select",
         action="append",
@@ -936,6 +937,7 @@ def main(argv: list[str] | None = None) -> int:
                 models=list(args.model),
                 include_all_models=args.all_models,
                 hash_blobs=not args.no_hash_blobs,
+                paths=BackupPaths(home=Path(args.home_dir).expanduser()) if args.home_dir else None,
             )
             print(f"Backed up {summary['items']} items ({summary['models']} models known) to {summary['path']}.")
             if summary["encrypted"]:

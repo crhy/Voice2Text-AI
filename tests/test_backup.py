@@ -14,6 +14,7 @@ import pytest
 
 from voice2text.backup import (
     BACKUP_FORMAT_VERSION,
+    KIND_MODEL_BLOB,
     KIND_MODEL_MANIFEST,
     MANIFEST_TAR_KEY,
     REDACTED_MARKER,
@@ -403,3 +404,20 @@ def test_main_cli_end_to_end(
     rc = main(["restore", str(out), "--destination-root", str(root), "--only", "config"])
     assert rc == 0
     assert (root / ".config" / "voice2text-ai" / "config.json").is_file()
+
+
+def test_main_cli_home_dir_flag(
+    fake_home: tuple[Path, dict[str, str]],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """create --home-dir backs up the given home without touching the real one."""
+    home, _ = fake_home
+    out = tmp_path / "archive.tar.gz"
+    rc = main(["create", "--output", str(out), "--no-encrypt", "--home-dir", str(home)])
+    assert rc == 0
+    # Without --home-dir the real $HOME would be scanned; the fake home's two
+    # fake models confirm the flag took effect.
+    assert "Backed up 7 items (2 models known)" in capsys.readouterr().out
+    manifest = read_manifest(out)
+    assert not [item for item in manifest["items"] if item["kind"] == KIND_MODEL_BLOB]
