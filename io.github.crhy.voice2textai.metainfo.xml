@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.0" date="2026-09-15">
+      <description>
+        <p>Backup and restore of Ollama models, settings, and OpenCode configuration: encrypted, integrity-checked archives with a versioned manifest, default redaction of secrets, selective restore, and a newer-configuration guard that never silently overwrites.</p>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-09-07">
       <description>
         <p>Efficiency improvements: faster audio level metering and transcription probes, batched AI response rendering, quieter eSpeak fallback startup, and more robust streaming for newer Ollama servers.</p>

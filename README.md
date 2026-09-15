@@ -110,6 +110,10 @@ flatpak-builder --user --install --force-clean build-dir io.github.crhy.voice2te
 Settings are stored in `$XDG_CONFIG_HOME/voice2text-ai/config.json` and edited
 from the Preferences dialog.
 
+Backups and restores are covered by the `v2t-backup` CLI, which archives
+settings, Ollama model manifests and optional model weights into a
+GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).
+
 ## Acknowledgements
 
 - [Faster Whisper](https://github.com/SYSTRAN/faster-whisper) for on-device transcription
