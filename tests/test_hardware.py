@@ -4,7 +4,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import voice2text.hardware as hardware
 from voice2text.hardware import (
+    _nvidia_smi_command,
     detect_gpu_vram_gb,
     detect_system_ram_gb,
     sample_gpu_usage,
@@ -36,6 +38,48 @@ def test_detect_gpu_vram_gb_parses_nvidia_smi_output() -> None:
 def test_detect_gpu_vram_gb_returns_none_when_no_tool_is_available(tmp_path: Path) -> None:
     with patch("subprocess.run", side_effect=FileNotFoundError):
         assert detect_gpu_vram_gb(sysfs_base=tmp_path) is None
+
+
+def test_nvidia_smi_command_prefers_bundled_copy(tmp_path: Path) -> None:
+    bundled = tmp_path / "nvml" / "nvidia-smi"
+    bundled.parent.mkdir()
+    bundled.touch()
+    with patch.object(hardware, "_BUNDLED_NVIDIA_SMI", bundled):
+        assert _nvidia_smi_command() == str(bundled)
+
+
+def test_nvidia_smi_command_falls_back_to_path_lookup() -> None:
+    missing = Path("/nonexistent/nvml/nvidia-smi")
+    with patch.object(hardware, "_BUNDLED_NVIDIA_SMI", missing):
+        assert _nvidia_smi_command() == "nvidia-smi"
+
+
+def test_detect_gpu_vram_gb_invokes_bundled_nvidia_smi(tmp_path: Path) -> None:
+    bundled = tmp_path / "nvml" / "nvidia-smi"
+    bundled.parent.mkdir()
+    bundled.touch()
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="16384\n", stderr="")
+    with (
+        patch.object(hardware, "_BUNDLED_NVIDIA_SMI", bundled),
+        patch("subprocess.run", return_value=fake) as run,
+    ):
+        assert detect_gpu_vram_gb(sysfs_base=tmp_path) == 16.0
+    assert run.call_args.args[0][0] == str(bundled)
+
+
+def test_sample_gpu_usage_invokes_bundled_nvidia_smi(tmp_path: Path) -> None:
+    bundled = tmp_path / "nvml" / "nvidia-smi"
+    bundled.parent.mkdir()
+    bundled.touch()
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="99, 15100, 16384\n", stderr="")
+    with (
+        patch.object(hardware, "_BUNDLED_NVIDIA_SMI", bundled),
+        patch("subprocess.run", return_value=fake) as run,
+    ):
+        usage = sample_gpu_usage()
+    assert usage is not None
+    assert usage.utilization_percent == 99.0
+    assert run.call_args.args[0][0] == str(bundled)
 
 
 def test_detect_system_ram_gb_parses_meminfo(tmp_path: Path) -> None:

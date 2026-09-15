@@ -92,10 +92,20 @@ def detect_gpu_vram_gb(sysfs_base: Path = Path("/sys/class/drm")) -> float | Non
     return _sysfs_amdgpu_vram_gb(sysfs_base)
 
 
+# Inside the Flatpak the host does not expose nvidia-smi, so hardware.py
+# prefers the copy bundled at /app/lib/nvml when present and falls back to
+# whatever ``nvidia-smi`` is on the PATH (the non-Flatpak dev case).
+_BUNDLED_NVIDIA_SMI = Path("/app/lib/nvml/nvidia-smi")
+
+
+def _nvidia_smi_command() -> str:
+    return str(_BUNDLED_NVIDIA_SMI) if _BUNDLED_NVIDIA_SMI.exists() else "nvidia-smi"
+
+
 def _nvidia_vram_gb() -> float | None:
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            [_nvidia_smi_command(), "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=5.0,
@@ -174,7 +184,7 @@ def _nvidia_gpu_usage() -> GpuUsage | None:
     try:
         result = subprocess.run(
             [
-                "nvidia-smi",
+                _nvidia_smi_command(),
                 "--query-gpu=utilization.gpu,memory.used,memory.total",
                 "--format=csv,noheader,nounits",
             ],

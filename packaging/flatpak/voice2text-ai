@@ -25,4 +25,12 @@ fi
 # Whisper can use the GPU inside the Flatpak sandbox.
 export LD_LIBRARY_PATH="/app/lib/cuda${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# Expose the bundled NVIDIA NVML tools (nvidia-smi + libnvidia-ml) so the app
+# can probe the host GPU for model sizing and the live GPU/percent widgets.
+# nvidia-smi is looked up on PATH; its libnvidia-ml.so.1 dependency is
+# dlopened and resolved from LD_LIBRARY_PATH. Bundled because the GNOME 50
+# runtime ships neither.
+export PATH="/app/lib/nvml${PATH:+:$PATH}"
+export LD_LIBRARY_PATH="/app/lib/nvml${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 exec python3 /app/lib/voice2text-ai/voice2text_ai.py "$@"

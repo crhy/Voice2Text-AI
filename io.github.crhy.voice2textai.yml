@@ -62,6 +62,26 @@ modules:
       - ln -sf libcublasLt.so.12.6.4.1 /app/lib/cuda/libcublasLt.so.12
       - ln -sf libcudart.so.12.6.77 /app/lib/cuda/libcudart.so.12
 
+  # nvidia-smi + NVML: the GNOME 50 runtime does not ship nvidia-smi and the
+  # sandbox does not inherit the host's, so hardware.py's GPU probes (model
+  # sizing + the top-right GPU/percent widgets) come back empty and the app
+  # falls back to a tiny iGPU figure. Vendor the working pair into
+  # /app/lib/nvml (mirrors the /app/lib/cuda layout). See
+  # packaging/flatpak/nvml/SOURCE-NOTES.md for provenance and licensing.
+  - name: nvidia-smi-libs
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    sources:
+      - type: file
+        path: packaging/flatpak/nvml/nvidia-smi
+      - type: file
+        path: packaging/flatpak/nvml/libnvidia-ml.so.1
+    build-commands:
+      - install -d /app/lib/nvml
+      - install -Dm755 nvidia-smi /app/lib/nvml/nvidia-smi
+      - install -Dm755 libnvidia-ml.so.1 /app/lib/nvml/libnvidia-ml.so.1
+
   - name: voice2text-ai
     buildsystem: simple
     sources:
