@@ -33,4 +33,4 @@ export LD_LIBRARY_PATH="/app/lib/cuda${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="/app/lib/nvml${PATH:+:$PATH}"
 export LD_LIBRARY_PATH="/app/lib/nvml${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-exec python3 /app/lib/voice2text-ai/voice2text_ai.py "$@"
+exec python3 /app/lib/voxa/voxa.py "$@"

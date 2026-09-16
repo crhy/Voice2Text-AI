@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from voice2text import catalog as cat
-from voice2text.catalog import (
+from voxa import catalog as cat
+from voxa.catalog import (
     CatalogCache,
     CatalogUnavailable,
     discover_catalog,
@@ -16,7 +16,7 @@ from voice2text.catalog import (
     refresh_due,
     select_families,
 )
-from voice2text.hardware import MODEL_CATALOG, ModelSuggestion
+from voxa.hardware import MODEL_CATALOG, ModelSuggestion
 
 
 def _tag_block(name: str, size: str, context: str = "256K") -> str:
@@ -122,7 +122,7 @@ def test_a_pinned_model_survives_being_dropped_from_the_library():
 
 
 def test_curated_entry_wins_a_size_tie_so_it_is_suggested_first():
-    from voice2text.hardware import suggest_models
+    from voxa.hardware import suggest_models
 
     curated = (ModelSuggestion("qwen2.5:14b", 9.0, "Curated"),)
     page = _page(_tag_block("qwen2.5:14b", "9.0GB"), _tag_block("other:14b", "9.0GB"))
@@ -168,7 +168,7 @@ def test_saving_to_an_unwritable_location_is_not_fatal(tmp_path):
 
 
 def test_a_curated_model_is_preferred_over_a_slightly_larger_discovered_one():
-    from voice2text.hardware import suggest_models
+    from voxa.hardware import suggest_models
 
     curated = (ModelSuggestion("qwen2.5:14b", 9.0, "Curated"),)
     # phi4:14b is 9.1GB against qwen2.5:14b's 9.0: larger, but only just.
@@ -179,7 +179,7 @@ def test_a_curated_model_is_preferred_over_a_slightly_larger_discovered_one():
 
 
 def test_a_clearly_larger_discovered_model_still_wins():
-    from voice2text.hardware import suggest_models
+    from voxa.hardware import suggest_models
 
     curated = (ModelSuggestion("qwen2.5:7b", 4.7, "Curated"),)
     page = _page(_tag_block("qwen2.5:7b", "4.7GB"), _tag_block("qwen2.5:14b", "9.0GB"))

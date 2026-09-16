@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voice2text.conversation import detect_exit_phrase, strip_wake_word
+from voxa.conversation import detect_exit_phrase, strip_wake_word
 
 
 def test_strip_wake_word_returns_none_when_absent() -> None:

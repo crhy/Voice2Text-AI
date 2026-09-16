@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Voxa
+Comment=Your personal voice assistant: dictation and local AI
+Exec=voxa
+Icon=io.github.crhy.voxa
+Terminal=false
+Type=Application
+Categories=Utility;AudioVideo;Accessibility;
+Keywords=voice;dictation;transcription;whisper;ollama;speech;assistant;
+StartupNotify=true

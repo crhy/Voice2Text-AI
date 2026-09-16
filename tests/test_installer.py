@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from voice2text import installer
+from voxa import installer
 
 
 class FakeStdin:

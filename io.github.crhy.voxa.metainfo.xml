@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.crhy.voice2textai</id>
-  <name>Voice2Text AI</name>
-  <summary>Fast native Linux dictation and local AI</summary>
+  <id>io.github.crhy.voxa</id>
+  <name>Voxa</name>
+  <summary>Your personal voice assistant: dictation and local AI</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer id="io.github.crhy">
     <name>crhy</name>
   </developer>
   <description>
-    <p>Voice2Text AI records from your microphone, transcribes speech locally with Faster Whisper, sends prompts to a local Ollama model, and reads responses aloud with a natural neural voice and an offline eSpeak NG fallback.</p>
+    <p>Voxa records from your microphone, transcribes speech locally with Faster Whisper, sends prompts to a local Ollama model, and reads responses aloud with a natural neural voice and an offline eSpeak NG fallback. Wake it by name, talk freely, and it answers in its own voice.</p>
     <p>The interface follows the system GTK and libadwaita theme, supports Wayland and X11, and uses PipeWire or PulseAudio through GStreamer.</p>
   </description>
-  <launchable type="desktop-id">io.github.crhy.voice2textai.desktop</launchable>
+  <launchable type="desktop-id">io.github.crhy.voxa.desktop</launchable>
   <url type="homepage">https://github.com/crhy/Voice2Text-AI</url>
   <url type="bugtracker">https://github.com/crhy/Voice2Text-AI/issues</url>
   <screenshots>
@@ -23,6 +23,13 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.0" date="2026-09-16">
+      <description>
+        <p>Voice2Text AI is now Voxa, a personal voice assistant: say "Voxa" to start a conversation, ask away, and get spoken answers from your local model. The app identity, window, menu, and assistant persona all carry the new name.</p>
+        <p>New Flatpak application ID: io.github.crhy.voxa (previously io.github.crhy.voice2textai). Existing installs keep running; import and install the new bundle to move to Voxa.</p>
+        <p>Settings moved from ~/.config/voice2text-ai to ~/.config/voxa — existing settings are carried over automatically on first start. The bundled backup tool is now voxa-backup (previously v2t-backup); archives created by older versions restore correctly with paths adjusted to the new location.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-16">
       <description>
         <p>Hands-free conversation is now a real assistant loop: the model remembers earlier turns of the exchange (sent as a chat history), you can talk over a spoken reply to interrupt it and keep talking, and "cancel" or "goodbye" ends the conversation by voice.</p>

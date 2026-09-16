@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from voice2text.config import ConfigStore, Settings
+from voxa.config import ConfigStore, Settings
 
 
 def test_defaults_when_config_is_missing(tmp_path: Path) -> None:
@@ -44,4 +44,16 @@ def test_wake_word_falls_back_to_default_when_blank(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path / "config.json")
     store.save(Settings(wake_word="   "))
 
-    assert store.load().wake_word == "computer"
+    assert store.load().wake_word == "voxa"
+
+
+def test_legacy_config_dir_is_migrated(tmp_path: Path) -> None:
+    old_dir = tmp_path / "config" / "voice2text-ai"
+    old_dir.mkdir(parents=True)
+    (old_dir / "config.json").write_text(json.dumps({"tts_rate": 200}), encoding="utf-8")
+
+    store = ConfigStore(tmp_path / "config" / "voxa" / "config.json")
+    loaded = store.load()
+
+    assert loaded.tts_rate == 200
+    assert (tmp_path / "config" / "voxa" / "config.json").is_file()

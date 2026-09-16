@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from voice2text.ollama import OllamaClient, OllamaError, strip_reasoning
+from voxa.ollama import OllamaClient, OllamaError, strip_reasoning
 
 
 class FakeResponse(io.BytesIO):

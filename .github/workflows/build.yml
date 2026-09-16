@@ -18,9 +18,9 @@ jobs:
       - name: Install test tools
         run: python -m pip install --upgrade -r requirements-dev.txt
       - name: Compile source
-        run: python -m compileall -q voice2text voice2text_ai.py
+        run: python -m compileall -q voxa voxa.py
       - name: Lint
-        run: ruff check voice2text tests voice2text_ai.py
+        run: ruff check voxa tests voxa.py
       - name: Unit tests
         run: python -m pytest -q
 
@@ -40,7 +40,7 @@ jobs:
       # huggingface-hub is pinned below the latest version).
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          manifest-path: io.github.crhy.voice2textai.yml
+          manifest-path: io.github.crhy.voxa.yml
           branch: master
           repo-dir: voice2text-repo
           build-bundle: false
@@ -61,8 +61,8 @@ jobs:
           --repo-url=https://crhy.github.io/spacedbazaar/flatpak-repo/
           --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
           voice2text-repo
-          Voice2Text-AI.flatpak
-          io.github.crhy.voice2textai
+          Voxa.flatpak
+          io.github.crhy.voxa
           master
       - name: Verify bundle can be imported by current OSTree
         shell: bash
@@ -72,18 +72,18 @@ jobs:
           repo="$probe/repo"
           checkout="$probe/checkout"
           ostree init --repo="$repo" --mode=archive-z2
-          flatpak build-import-bundle --no-update-summary "$repo" Voice2Text-AI.flatpak
-          ref=app/io.github.crhy.voice2textai/x86_64/master
+          flatpak build-import-bundle --no-update-summary "$repo" Voxa.flatpak
+          ref=app/io.github.crhy.voxa/x86_64/master
           ostree --repo="$repo" refs | grep -Fx "$ref"
           ostree --repo="$repo" checkout --user-mode "$ref" "$checkout"
-          test -f "$checkout/export/share/metainfo/io.github.crhy.voice2textai.metainfo.xml"
-          test -s "$checkout/export/share/icons/hicolor/256x256/apps/io.github.crhy.voice2textai.png"
+          test -f "$checkout/export/share/metainfo/io.github.crhy.voxa.metainfo.xml"
+          test -s "$checkout/export/share/icons/hicolor/256x256/apps/io.github.crhy.voxa.png"
           flatpak build-update-repo "$repo"
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Voice2Text-AI-Flatpak
-          path: Voice2Text-AI.flatpak
+          name: Voxa-Flatpak
+          path: Voxa.flatpak
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -94,10 +94,10 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Voice2Text-AI-Flatpak
+          name: Voxa-Flatpak
       - uses: softprops/action-gh-release@v2
         with:
-          name: Voice2Text AI ${{ github.ref_name }}
+          name: Voxa ${{ github.ref_name }}
           draft: false
           generate_release_notes: true
-          files: Voice2Text-AI.flatpak
+          files: Voxa.flatpak

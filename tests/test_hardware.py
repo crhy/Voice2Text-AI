@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-import voice2text.hardware as hardware
-from voice2text.hardware import (
+import voxa.hardware as hardware
+from voxa.hardware import (
     _nvidia_smi_command,
     detect_gpu_vram_gb,
     detect_system_ram_gb,

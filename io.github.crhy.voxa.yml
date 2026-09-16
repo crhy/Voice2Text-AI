@@ -1,8 +1,8 @@
-id: io.github.crhy.voice2textai
+id: io.github.crhy.voxa
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
-command: voice2text-ai
+command: voxa
 
 finish-args:
   - --share=ipc
@@ -82,17 +82,17 @@ modules:
       - install -Dm755 nvidia-smi /app/lib/nvml/nvidia-smi
       - install -Dm755 libnvidia-ml.so.1 /app/lib/nvml/libnvidia-ml.so.1
 
-  - name: voice2text-ai
+  - name: voxa
     buildsystem: simple
     sources:
       - type: dir
         path: .
     build-commands:
-      - install -d /app/lib/voice2text-ai/voice2text
-      - install -Dm755 voice2text_ai.py /app/lib/voice2text-ai/voice2text_ai.py
-      - install -Dm644 voice2text/*.py /app/lib/voice2text-ai/voice2text/
-      - install -Dm755 packaging/flatpak/voice2text-ai /app/bin/voice2text-ai
-      - install -Dm755 packaging/flatpak/v2t-backup /app/bin/v2t-backup
-      - install -Dm644 io.github.crhy.voice2textai.desktop /app/share/applications/io.github.crhy.voice2textai.desktop
-      - install -Dm644 io.github.crhy.voice2textai.metainfo.xml /app/share/metainfo/io.github.crhy.voice2textai.metainfo.xml
-      - install -Dm644 icons/io.github.crhy.voice2textai.png /app/share/icons/hicolor/256x256/apps/io.github.crhy.voice2textai.png
+      - install -d /app/lib/voxa/voxa
+      - install -Dm755 voxa.py /app/lib/voxa/voxa.py
+      - install -Dm644 voxa/*.py /app/lib/voxa/voxa/
+      - install -Dm755 packaging/flatpak/voxa /app/bin/voxa
+      - install -Dm755 packaging/flatpak/voxa-backup /app/bin/voxa-backup
+      - install -Dm644 io.github.crhy.voxa.desktop /app/share/applications/io.github.crhy.voxa.desktop
+      - install -Dm644 io.github.crhy.voxa.metainfo.xml /app/share/metainfo/io.github.crhy.voxa.metainfo.xml
+      - install -Dm644 icons/io.github.crhy.voxa.png /app/share/icons/hicolor/256x256/apps/io.github.crhy.voxa.png

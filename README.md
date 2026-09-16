@@ -1,14 +1,13 @@
-# Voice2Text AI
+# Voxa
 
-Fast native Linux dictation with local AI. Record from your microphone, have
-speech transcribed on-device with Faster Whisper, prompt a local Ollama model,
-and hear the answer spoken back with a natural neural voice and an offline
-eSpeak NG fallback.
+Your personal voice assistant for Linux. Dictate text with on-device
+Faster Whisper, ask a local Ollama model, and hear the answer spoken back
+with a natural neural voice and an offline eSpeak NG fallback.
 
 Built with GTK 4 and libadwaita, powered by GStreamer, and distributed as a
 Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
 
-![Voice2Text AI 0.4 main window](docs/screenshots/v0.4.0-main.png)
+![Voxa main window](docs/screenshots/v0.4.0-main.png)
 
 ## Features
 
@@ -21,7 +20,7 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
   network voice is unavailable, eSpeak NG speaks offline automatically.
 - **Adaptive segmentation** — speech is split at pauses, so dictation flows
   naturally while transcribing in the background.
-- **Conversation mode** — say a wake word (default "computer") and it starts
+- **Conversation mode** — say a wake word (default "voxa") and it starts
   listening, transcribes your request, asks the selected Ollama model, and
   speaks the reply back — hands-free from wake word to answer. The model
   remembers the earlier turns of the exchange, you can talk over a spoken
@@ -40,8 +39,8 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
 The easiest way is the Flatpak from the [releases](https://github.com/crhy/Voice2Text-AI/releases):
 
 ```bash
-flatpak install --user Voice2Text-AI.flatpak
-flatpak run io.github.crhy.voice2textai
+flatpak install --user Voxa.flatpak
+flatpak run io.github.crhy.voxa
 ```
 
 For local AI, you need [Ollama](https://ollama.com/) with at least one model
@@ -72,11 +71,11 @@ bindings. Install the Python dependencies and launch:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python voice2text_ai.py
+.venv/bin/python voxa.py
 ```
 
-`voice2text_ai.py` is a thin launcher over the `voice2text` package; the
-PyPI entry point is `voice2text-ai`.
+`voxa.py` is a thin launcher over the `voxa` package; the console entry
+point is `voxa` (and `voxa-backup` for backup/restore).
 
 ## Keyboard shortcuts
 
@@ -105,15 +104,17 @@ python3 /tmp/flatpak-builder-tools/pip/flatpak-pip-generator \
   --prefer-wheels=ctranslate2,onnxruntime,tokenizers,av,numpy,pyyaml,protobuf \
   --wheel-arches=x86_64 \
   --output=python3-requirements-flatpak
-flatpak-builder --user --install --force-clean build-dir io.github.crhy.voice2textai.yml
+flatpak-builder --user --install --force-clean build-dir io.github.crhy.voxa.yml
 ```
 
 ## Configuration
 
-Settings are stored in `$XDG_CONFIG_HOME/voice2text-ai/config.json` and edited
-from the Preferences dialog.
+Settings are stored in `$XDG_CONFIG_HOME/voxa/config.json` and edited
+from the Preferences dialog. (If you upgrade from 0.5.0, settings from the
+old `$XDG_CONFIG_HOME/voice2text-ai` location are carried over on first
+launch.)
 
-Backups and restores are covered by the `v2t-backup` CLI, which archives
+Backups and restores are covered by the `voxa-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).
 

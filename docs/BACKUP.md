@@ -1,9 +1,11 @@
-# Backup & restore (`v2t-backup`)
+# Backup & restore (`voxa-backup`)
 
-Voice2Text AI ships a command-line tool, **`v2t-backup`**, for backing up and
+Voxa ships a command-line tool, **`voxa-backup`**, for backing up and
 restoring:
 
-- **Voice2Text settings** — `~/.config/voice2text-ai/config.json`
+- **Voxa settings** — `~/.config/voxa/config.json` (backups made by 0.5.x
+  store it as `~/.config/voice2text-ai/config.json`; restoring such an
+  archive places it at the new location automatically)
 - **Ollama configuration** — `~/.ollama/config.json` (the integrations that map
   tools such as dsh, hermes-desktop, opencode, qwen to model lists)
 - **Ollama model manifests** — everything under `~/.ollama/models/manifests/`
@@ -22,16 +24,16 @@ restoring:
 
 ```sh
 # Create an encrypted backup (prompts for a passphrase twice).
-v2t-backup create --output backup-2026-09-15.tar.gz.gpg
+voxa-backup create --output backup-2026-09-15.tar.gz.gpg
 
 # Verify the archive integrity (re-hashes every stored item).
-v2t-backup verify backup-2026-09-15.tar.gz.gpg --passphrase-file ./pass.txt
+voxa-backup verify backup-2026-09-15.tar.gz.gpg --passphrase-file ./pass.txt
 
 # Preview a restore on this machine without writing anything.
-v2t-backup restore backup-2026-09-15.tar.gz.gpg --dry-run --passphrase-file ./pass.txt
+voxa-backup restore backup-2026-09-15.tar.gz.gpg --dry-run --passphrase-file ./pass.txt
 
 # Restore settings + manifests (configs only here).
-v2t-backup restore backup-2026-09-15.tar.gz.gpg --passphrase-file ./pass.txt
+voxa-backup restore backup-2026-09-15.tar.gz.gpg --passphrase-file ./pass.txt
 ```
 
 The passphrase can be supplied in three ways (checked in this order):
@@ -40,7 +42,7 @@ The passphrase can be supplied in three ways (checked in this order):
    (mode `0600`), and not be empty.
 2. `--passphrase TEXT` — visible on the command line; avoid on shared machines.
 3. Interaction: the tool prompts twice (requires a TTY). Alternatively set the
-   environment variable `V2T_BACKUP_PASSPHRASE`.
+   environment variable `VOXA_BACKUP_PASSPHRASE`.
 
 ## Archive format
 
@@ -59,7 +61,7 @@ encryption) — containing:
     `model_manifest`, or `model_blob`), `name`, `path`, `sha256`, `size`,
     `mtime`, and `redacted_keys` (dotted paths of values that were redacted).
 - `items/...` — the actual files:
-  - `items/.config/voice2text-ai/config.json`
+  - `items/.config/voxa/config.json`
   - `items/.ollama/config.json`
   - `items/.config/opencode/<file>`
   - `items/.ollama/models/manifests/<registry>/<path>`
@@ -72,19 +74,19 @@ is re-hashed against the manifest before `create` reports success.
 
 ```sh
 # Small default archive: configs + manifests of ALL models, no weight files.
-v2t-backup create -o backup.tar.gz.gpg
+voxa-backup create -o backup.tar.gz.gpg
 
 # Also store the weight files of one model (repeatable; name or name-without-tag):
-v2t-backup create -o backup.tar.gz.gpg -m qwen2.5:0.5b -m qwen38-codex
+voxa-backup create -o backup.tar.gz.gpg -m qwen2.5:0.5b -m qwen38-codex
 
 # Store every model's blobs (very large; do this to a fast, big disk):
-v2t-backup create -o backup.tar.gz.gpg --all-models
+voxa-backup create -o backup.tar.gz.gpg --all-models
 
 # Skip the (slow, one-way) per-blob SHA-256 pass:
-v2t-backup create -o backup.tar.gz.gpg --no-hash-blobs
+voxa-backup create -o backup.tar.gz.gpg --no-hash-blobs
 
 # Unencrypted output (testing / disposable only):
-v2t-backup create -o backup.tar.gz --no-encrypt
+voxa-backup create -o backup.tar.gz --no-encrypt
 ```
 
 Unknown `-m` names are reported as warnings and ignored; the model is still
@@ -94,7 +96,7 @@ be re-pulled.
 ## Restoring
 
 ```sh
-v2t-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt
+voxa-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt
 ```
 
 Restore behaviour:
@@ -145,9 +147,9 @@ original. On a clean system:
 
 1. Restore only configuration:
    ```sh
-   v2t-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt --only config
+   voxa-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt --only config
    ```
-   This puts `~/.config/voice2text-ai/config.json`, `~/.ollama/config.json`,
+   This puts `~/.config/voxa/config.json`, `~/.ollama/config.json`,
    and the OpenCode config back in place. Re-enter any values reported as
    redacted (API keys, OAuth tokens, etc.).
 2. Check which models need downloading: run `ollama list` and compare with the
@@ -159,15 +161,15 @@ original. On a clean system:
    `ollama pull hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/IQ3_S`). Models
    whose `included` flag is `true` may instead be restored from the archive:
    ```sh
-   v2t-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt --select <name>
+   voxa-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt --select <name>
    ```
    which restores both its manifest and its blob(s).
 3. Verify equivalence:
    - `ollama list` shows the same set of models and sizes.
-   - `v2t-backup verify <archive>` still passes.
+   - `voxa-backup verify <archive>` still passes.
    - The restored `~/.ollama/config.json` integrations reference the same model
      lists as before (check against the pre-backup file if you kept it).
-4. Smoke-test the app: open Voice2Text AI, confirm the configured model names
+4. Smoke-test the app: open Voxa, confirm the configured model names
    are accepted by Ollama, speak a short phrase, and get a streamed response.
 
 If steps 1–4 succeed, the backup/restore round trip is verified end-to-end.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 
-from voice2text.dictation import segment_stream
+from voxa.dictation import segment_stream
 
 LOUD_CHUNK = (b"\x00\x10" * 1000, 1000.0)  # 2000 bytes, above any test threshold
 QUIET_CHUNK = (b"\x00\x00" * 1000, 0.0)

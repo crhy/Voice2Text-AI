@@ -1,4 +1,4 @@
-"""Tests for voice2text.backup (issue #26)."""
+"""Tests for voxa.backup (issue #26)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from voice2text.backup import (
+from voxa.backup import (
     BACKUP_FORMAT_VERSION,
     KIND_MODEL_BLOB,
     KIND_MODEL_MANIFEST,
@@ -45,7 +45,7 @@ def build_fake_home(root: Path) -> dict[str, str]:
 
     Returns a map of ``model display name -> 64-hex blob part``.
     """
-    (root / ".config" / "voice2text-ai").mkdir(parents=True)
+    (root / ".config" / "voxa").mkdir(parents=True)
     (root / ".config" / "opencode").mkdir(parents=True)
     (root / ".ollama" / "models" / "blobs").mkdir(parents=True)
     (root / ".ollama" / "models" / "manifests" / "registry.ollama.ai" / "library" / "qwen2.5").mkdir(parents=True)
@@ -53,7 +53,7 @@ def build_fake_home(root: Path) -> dict[str, str]:
         parents=True
     )
 
-    (root / ".config" / "voice2text-ai" / "config.json").write_text(
+    (root / ".config" / "voxa" / "config.json").write_text(
         json.dumps(
             {
                 "api_key": "sk-super-secret-key-0123456789abcdef",
@@ -162,7 +162,7 @@ def test_inventory_names_layout(fake_home: tuple[Path, dict[str, str]]) -> None:
     items, models, _ = build_inventory(BackupPaths(home=home), hash_blobs=False)
     names = {item.name for item in items}
     assert names == {
-        "config:voice2text",
+        "config:voxa",
         "config:ollama",
         "config:opencode:opencode.json",
         "config:opencode:opencode.custom.jsonc",
@@ -216,7 +216,7 @@ def test_create_verify_restore_roundtrip_unencrypted(fake_home: tuple[Path, dict
     assert report["verify_failed"] == []
 
     # No secret left in the restored config text.
-    cfg_bytes = (root / ".config" / "voice2text-ai" / "config.json").read_bytes()
+    cfg_bytes = (root / ".config" / "voxa" / "config.json").read_bytes()
     assert b"sk-super-secret" not in cfg_bytes
     assert REDACTED_MARKER.encode() in cfg_bytes
     cfg = json.loads(cfg_bytes)
@@ -281,7 +281,7 @@ def test_encrypted_roundtrip(fake_home: tuple[Path, dict[str, str]], tmp_path: P
     report = restore_backup(out, passphrase_file=pass_file, destination_root=root)
     assert report["restored"] == 8
     assert report["verify_failed"] == []
-    cfg = json.loads((root / ".config" / "voice2text-ai" / "config.json").read_bytes())
+    cfg = json.loads((root / ".config" / "voxa" / "config.json").read_bytes())
     assert cfg["api_key"] == REDACTED_MARKER
     assert (root / ".ollama" / "models" / "blobs" / f"sha256-{blobs['qwen2.5:0.5b']}").is_file()
 
@@ -306,13 +306,13 @@ def test_newer_file_guard_and_force(fake_home: tuple[Path, dict[str, str]], tmp_
     root.mkdir()
     restore_backup(out, destination_root=root)
 
-    dest = root / ".config" / "voice2text-ai" / "config.json"
+    dest = root / ".config" / "voxa" / "config.json"
     original = dest.read_bytes()
     future = time.time() + 3600
     os.utime(dest, (future, future))
 
     report = restore_backup(out, destination_root=root)
-    assert "config:voice2text" in report["skipped_newer"]
+    assert "config:voxa" in report["skipped_newer"]
     assert dest.read_bytes() == original  # untouched
 
     forced = restore_backup(out, destination_root=root, force=True)
@@ -336,7 +336,7 @@ def test_dry_run_select_and_only_kinds(fake_home: tuple[Path, dict[str, str]], t
     root2 = tmp_path / "restore2"
     root2.mkdir()
     cfg_only = restore_backup(out, destination_root=root2, only_kinds={"config"})
-    assert cfg_only["restored"] == 5  # v2t + ollama + 3 opencode configs
+    assert cfg_only["restored"] == 5  # voxa + ollama + 3 opencode configs
     assert not list((root2 / ".ollama" / "models").rglob("manifests"))
     blobs_dir = root2 / ".ollama" / "models" / "blobs"
     assert not blobs_dir.is_dir() or not list(blobs_dir.iterdir())
@@ -367,14 +367,14 @@ def test_blob_included_without_hashing(fake_home: tuple[Path, dict[str, str]], t
     assert by_name["qwen2.5:0.5b"]["blob_sha256"] == {}  # not hashed
 
 
-def test_missing_v2t_config_is_a_warning(tmp_path: Path) -> None:
+def test_missing_voxa_config_is_a_warning(tmp_path: Path) -> None:
     home = tmp_path / "home"
-    (home / ".config" / "voice2text-ai").mkdir(parents=True)
-    (home / ".config" / "voice2text-ai" / "config.json").write_text("{}")
+    (home / ".config" / "voxa").mkdir(parents=True)
+    (home / ".config" / "voxa" / "config.json").write_text("{}")
     _items, _models, warnings = build_inventory(BackupPaths(home=home), hash_blobs=False)
     assert any("missing:" in w and ".ollama/config.json" in w for w in warnings)
     assert not any("opencode" in w for w in warnings)  # absent opencode dir is silent
-    # v2t config alone still yields an archive.
+    # Voxa config alone still yields an archive.
     out = tmp_path / "archive.tar.gz"
     summary = create_backup(out, no_encrypt=True, paths=BackupPaths(home=home))
     assert summary["items"] == 1
@@ -386,10 +386,10 @@ def test_main_cli_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert build_arg_parser().prog == "v2t-backup"
+    assert build_arg_parser().prog == "voxa-backup"
 
     home, _ = fake_home
-    monkeypatch.setattr("voice2text.backup.default_backup_paths", lambda: BackupPaths(home=home))
+    monkeypatch.setattr("voxa.backup.default_backup_paths", lambda: BackupPaths(home=home))
     out = tmp_path / "archive.tar.gz"
     rc = main(["create", "--output", str(out), "--no-encrypt", "-m", "qwen2.5"])
     assert rc == 0
@@ -403,7 +403,7 @@ def test_main_cli_end_to_end(
     root.mkdir()
     rc = main(["restore", str(out), "--destination-root", str(root), "--only", "config"])
     assert rc == 0
-    assert (root / ".config" / "voice2text-ai" / "config.json").is_file()
+    assert (root / ".config" / "voxa" / "config.json").is_file()
 
 
 def test_main_cli_home_dir_flag(
