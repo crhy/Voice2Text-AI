@@ -23,9 +23,12 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.5.0" date="2026-09-15">
+    <release version="0.5.0" date="2026-09-16">
       <description>
+        <p>Hands-free conversation is now a real assistant loop: the model remembers earlier turns of the exchange (sent as a chat history), you can talk over a spoken reply to interrupt it and keep talking, and "cancel" or "goodbye" ends the conversation by voice.</p>
+        <p>A model picker in the main window and a page-per-topic Preferences layout, plus a GPU utilization gauge that stays visible for the app's lifetime.</p>
         <p>Backup and restore of Ollama models, settings, and OpenCode configuration: encrypted, integrity-checked archives with a versioned manifest, default redaction of secrets, selective restore, and a newer-configuration guard that never silently overwrites.</p>
+        <p>Hardware-aware model suggestions sized to your GPU VRAM, one-click Ollama install, and in-app model management; live model discovery from Ollama's library.</p>
       </description>
     </release>
     <release version="0.4.4" date="2026-09-07">
