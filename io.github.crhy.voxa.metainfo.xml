@@ -28,6 +28,7 @@
         <p>Voice2Text AI is now Voxa, a personal voice assistant: say "Voxa" to start a conversation, ask away, and get spoken answers from your local model. The app identity, window, menu, and assistant persona all carry the new name.</p>
         <p>New Flatpak application ID: io.github.crhy.voxa (previously io.github.crhy.voice2textai). Existing installs keep running; import and install the new bundle to move to Voxa.</p>
         <p>Settings moved from ~/.config/voice2text-ai to ~/.config/voxa — existing settings are carried over automatically on first start. The bundled backup tool is now voxa-backup (previously v2t-backup); archives created by older versions restore correctly with paths adjusted to the new location.</p>
+        <p>The default wake word for conversation mode is now "voxa" (change it in Preferences → Conversation if you prefer something else).</p>
       </description>
     </release>
     <release version="0.5.0" date="2026-09-16">
