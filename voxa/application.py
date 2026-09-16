@@ -10,7 +10,7 @@ from . import APP_ID, APP_NAME, APP_VERSION  # noqa: E402
 from .window import MainWindow  # noqa: E402
 
 
-class Voice2TextApplication(Adw.Application):
+class VoxaApplication(Adw.Application):
     def __init__(self) -> None:
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.window: MainWindow | None = None
@@ -37,7 +37,7 @@ class Voice2TextApplication(Adw.Application):
             website="https://github.com/crhy/Voice2Text-AI",
             issue_url="https://github.com/crhy/Voice2Text-AI/issues",
             license_type=Gtk.License.MIT_X11,
-            comments="Fast native Linux dictation, local AI prompts, and natural speech output.",
+            comments="Your personal voice assistant: hands-free dictation, local AI answers, and natural speech.",
         )
         about.add_credit_section("Built with", ["GTK 4", "libadwaita", "Faster Whisper", "GStreamer", "Ollama", "Edge TTS", "eSpeak NG"])
         about.present(self.window)

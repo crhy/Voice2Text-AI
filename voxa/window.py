@@ -42,8 +42,8 @@ TTS_VOICES = [
 # letting a long hands-free session grow the prompt unboundedly.
 CONVERSATION_HISTORY_MESSAGES = 24
 CONVERSATION_SYSTEM_PROMPT = (
-    "You are a hands-free voice assistant on the user's desktop. Keep answers "
-    "short and conversational — one or two sentences — since they are spoken aloud."
+    "You are Voxa, a hands-free voice assistant on the user's desktop. Keep "
+    "answers short and conversational — one or two sentences — since they are spoken aloud."
 )
 # Barge-in: loud sustained speech while a reply is being read interrupts it.
 # A short grace period ignores the TTS itself starting, and the streak
@@ -88,7 +88,7 @@ def string_item_factory(*, wrap: bool, width_chars: int) -> Gtk.SignalListItemFa
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application)
-        self.set_title("Voice2Text AI")
+        self.set_title("Voxa")
         self.set_default_size(1080, 720)
         self.set_size_request(700, 520)
 
@@ -155,7 +155,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_content(toolbar)
 
         header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title="Voice2Text AI", subtitle="Dictation and local AI"))
+        header.set_title_widget(Adw.WindowTitle(title="Voxa", subtitle="Your personal voice assistant"))
         toolbar.add_top_bar(header)
 
         self.record_button = Gtk.ToggleButton(label="Dictate")
@@ -173,7 +173,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
         menu.append("Keyboard Shortcuts", "win.shortcuts")
-        menu.append("About Voice2Text AI", "app.about")
+        menu.append("About Voxa", "app.about")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         header.pack_end(menu_button)
 

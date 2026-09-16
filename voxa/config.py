@@ -23,7 +23,7 @@ class Settings:
     silence_ms: int = 900
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
-    wake_word: str = "computer"
+    wake_word: str = "voxa"
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -35,7 +35,7 @@ class Settings:
         self.max_segment_seconds = max(2.0, min(20.0, float(self.max_segment_seconds)))
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
-        self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
+        self.wake_word = (self.wake_word or "voxa").strip()[:32] or "voxa"
         return self
 
 
@@ -45,12 +45,13 @@ class ConfigStore:
     def __init__(self, path: Path | None = None) -> None:
         if path is None:
             base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-            path = base / "voice2text-ai" / "config.json"
+            path = base / "voxa" / "config.json"
         self.path = path
         self.legacy_path = Path.home() / ".voice_config.json"
 
     def load(self) -> Settings:
         self._migrate_legacy_file()
+        self._migrate_legacy_config_dir()
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -88,6 +89,20 @@ class ConfigStore:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(self.legacy_path, self.path)
+        except OSError:
+            # Migration is best-effort; load() will fall back to defaults.
+            return
+
+    def _migrate_legacy_config_dir(self) -> None:
+        """Move settings from the pre-0.6 ``.config/voice2text-ai`` directory."""
+        if self.path.exists() or self.path.parent.name != "voxa":
+            return
+        old_path = self.path.parent.parent / "voice2text-ai" / "config.json"
+        if not old_path.exists() or old_path == self.path:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(old_path, self.path)
         except OSError:
             # Migration is best-effort; load() will fall back to defaults.
             return

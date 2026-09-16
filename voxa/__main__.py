@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import sys
 
-from .application import Voice2TextApplication
+from .application import VoxaApplication
 
 
 def main() -> int:
-    return Voice2TextApplication().run(sys.argv)
+    return VoxaApplication().run(sys.argv)
 
 
 if __name__ == "__main__":
