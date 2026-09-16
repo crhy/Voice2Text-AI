@@ -23,7 +23,10 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
   naturally while transcribing in the background.
 - **Conversation mode** — say a wake word (default "computer") and it starts
   listening, transcribes your request, asks the selected Ollama model, and
-  speaks the reply back — hands-free from wake word to answer.
+  speaks the reply back — hands-free from wake word to answer. The model
+  remembers the earlier turns of the exchange, you can talk over a spoken
+  reply to interrupt it, and "cancel" or "goodbye" ends the conversation by
+  voice.
 - **Hardware-aware model suggestions** — Preferences shows Ollama models
   sized to fit your detected GPU VRAM (or system RAM if there's no GPU).
 - **One-click Ollama install and model management** — install or update

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 
 import gi
@@ -36,6 +38,18 @@ TTS_VOICES = [
     ("Sonia — UK female", "en-GB-SoniaNeural"),
     ("Ryan — UK male", "en-GB-RyanNeural"),
 ]
+# A few turns of history keeps the model aware of what was just said without
+# letting a long hands-free session grow the prompt unboundedly.
+CONVERSATION_HISTORY_MESSAGES = 24
+CONVERSATION_SYSTEM_PROMPT = (
+    "You are a hands-free voice assistant on the user's desktop. Keep answers "
+    "short and conversational — one or two sentences — since they are spoken aloud."
+)
+# Barge-in: loud sustained speech while a reply is being read interrupts it.
+# A short grace period ignores the TTS itself starting, and the streak
+# requirement keeps a cough from killing the reply.
+BARGE_IN_GRACE_SECONDS = 0.6
+BARGE_IN_STREAK = 3
 
 
 def idle(callback: Callable, *args) -> None:
@@ -90,6 +104,18 @@ class MainWindow(Adw.ApplicationWindow):
         self.listening = False
         self.conversation: ConversationController | None = None
         self.conversation_active = False
+        # Earlier turns of the current hands-free conversation, sent to the
+        # model as a chat message list so it can follow the thread.
+        self._conversation_history: deque[dict[str, str]] = deque(
+            maxlen=CONVERSATION_HISTORY_MESSAGES
+        )
+        # Barge-in bookkeeping: when the reply started being spoken (0 = not
+        # speaking) and how many recent level ticks were loud enough to count.
+        self._speaking_since = 0.0
+        self._barge_in_streak = 0
+        # The conversation turn whose user message was just pushed, so a stale
+        # finish/error callback can't untangle history built by a newer turn.
+        self._pending_user_generation: int | None = None
         self.query_cancel = threading.Event()
         self.devices: list[AudioDevice] = []
         self.ollama_models: list[str] = []
@@ -890,6 +916,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_prompt=lambda text: idle(self._on_conversation_prompt, text),
             on_status=lambda text: idle(self._set_status, text, True),
             on_error=lambda text: idle(self._toast, text),
+            on_exit=lambda kind: idle(self._on_conversation_exit, kind),
         )
         self.conversation.start()
         try:
@@ -918,8 +945,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.audio.stop()
         if self.conversation is not None:
             self.conversation.stop()
+            self.conversation.unmute()
             self.conversation = None
         self.conversation_active = False
+        # A reply may still be playing: speech.stop() fires no callbacks, so
+        # the mute/barge-in state is reset explicitly here.
+        self.speech.stop()
+        self._speaking_since = 0.0
+        self._barge_in_streak = 0
+        if self._pending_user_generation is not None and self._conversation_history:
+            self._conversation_history.pop()
+        self._pending_user_generation = None
+        self.query_cancel.set()
+        self._query_generation += 1
         self._stop_level_updates()
         self.conversation_button.set_label("Conversation")
         self.conversation_button.remove_css_class("destructive-action")
@@ -945,9 +983,32 @@ class MainWindow(Adw.ApplicationWindow):
         self.ask_ai(text)
         return False
 
+    def _on_conversation_exit(self, kind: str) -> bool:
+        # The user ended the exchange by voice: cancel any in-flight request,
+        # make the mic available again, and either drop back to listening for
+        # the wake word ("cancel") or leave conversation mode ("goodbye").
+        self.query_cancel.set()
+        self._query_generation += 1
+        if self._pending_user_generation is not None and self._conversation_history:
+            self._conversation_history.pop()
+        self._pending_user_generation = None
+        if self.conversation is not None:
+            self.conversation.unmute()
+        self.speech.stop()
+        self._speaking_since = 0.0
+        self._barge_in_streak = 0
+        if kind == "goodbye":
+            self.stop_conversation_mode()
+            self._set_status("Goodbye!")
+        else:
+            self._set_status(self._conversation_idle_status())
+        return False
+
     def _conversation_speak(self, text: str) -> None:
         if self.conversation is not None:
             self.conversation.mute()
+        self._speaking_since = time.monotonic()
+        self._barge_in_streak = 0
         self._set_status("Speaking…", busy=True)
         self.speech.speak(
             text,
@@ -959,17 +1020,25 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _conversation_idle_status(self) -> str:
-        return f"Conversation mode — say “{self.settings.wake_word}” to begin" if self.conversation_active else "Ready"
+        return (
+            f"Listening — say “{self.settings.wake_word}” to ask something"
+            if self.conversation_active
+            else "Ready"
+        )
 
     def _on_conversation_speech_done(self) -> bool:
         if self.conversation is not None:
             self.conversation.unmute()
+        self._speaking_since = 0.0
+        self._barge_in_streak = 0
         self._set_status(self._conversation_idle_status())
         return False
 
     def _on_conversation_speech_error(self, error: str) -> bool:
         if self.conversation is not None:
             self.conversation.unmute()
+        self._speaking_since = 0.0
+        self._barge_in_streak = 0
         self._toast(error)
         self._set_status(self._conversation_idle_status())
         return False
@@ -992,12 +1061,49 @@ class MainWindow(Adw.ApplicationWindow):
             self._level_source = GLib.timeout_add(50, self._flush_level)
 
     def _flush_level(self) -> bool:
-        if not self.listening:
+        # Both dictation and conversation mode run the live level meter; in
+        # conversation mode this also samples for barge-in.
+        if not self.listening and not self.conversation_active:
             self._level_source = 0
             return False
         self.level.set_value(self._latest_level)
         self.status_box.queue_draw()
+        self._maybe_barge_in()
         return True
+
+    def _barge_in_target_level(self) -> float:
+        # Speech over the assistant's own voice: well above the plain
+        # voice-detection threshold so background noise never interrupts.
+        return max(self.settings.voice_threshold * 1.4, self.settings.voice_threshold + 350)
+
+    def _maybe_barge_in(self) -> None:
+        """Interrupt a spoken reply when the user talks over it.
+
+        The mic keeps reporting levels while muted, so sustained loud speech
+        here means the user interrupted: stop the reply, unmute, and let the
+        very next utterance become a prompt without the wake word.
+        """
+        if not self.conversation_active or self.conversation is None or not self.conversation.muted:
+            self._barge_in_streak = 0
+            return
+        if self._speaking_since <= 0.0:
+            return
+        if time.monotonic() - self._speaking_since < BARGE_IN_GRACE_SECONDS:
+            self._barge_in_streak = 0
+            return
+        if self._latest_level <= self._barge_in_target_level():
+            self._barge_in_streak = 0
+            return
+        self._barge_in_streak += 1
+        if self._barge_in_streak < BARGE_IN_STREAK:
+            return
+        self._barge_in_streak = 0
+        self._speaking_since = 0.0
+        self.speech.stop()
+        self.conversation.unmute()
+        self.conversation.arm_prompt()
+        self._toast("Interrupted — go ahead.")
+        self._set_status("Listening for your request…", busy=True)
 
     def _stop_level_updates(self) -> None:
         if self._level_source:
@@ -1068,6 +1174,10 @@ class MainWindow(Adw.ApplicationWindow):
     def clear_all(self) -> None:
         self._stop_dictation_for_action()
         self.stop_current_work()
+        # A fresh start includes forgetting the conversation thread: the model
+        # shouldn't carry context from a cleared transcript into the next turn.
+        self._conversation_history.clear()
+        self._pending_user_generation = None
         self._set_text(self.transcript_view, "")
         self._set_text(self.response_view, "")
         self._set_status("Ready")
@@ -1077,7 +1187,13 @@ class MainWindow(Adw.ApplicationWindow):
         if prompt is None:
             prompt = self._get_text(self.transcript_view)
         else:
-            self._set_text(self.transcript_view, prompt)
+            if self.conversation_active:
+                # Keep the exchange visible while talking hands-free: each new
+                # question adds a line instead of wiping the conversation.
+                existing = self._get_text(self.transcript_view)
+                self._set_text(self.transcript_view, f"{existing}\n{prompt}" if existing else prompt)
+            else:
+                self._set_text(self.transcript_view, prompt)
         if not prompt:
             self._toast("Speak or type something first.")
             return
@@ -1091,6 +1207,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.query_cancel = cancel_event
         self._query_generation += 1
         generation = self._query_generation
+
+        # In conversation mode the question joins the running thread of turns;
+        # a plain dictation/typed question stays a single-shot prompt.
+        if self.conversation_active:
+            if not self._conversation_history:
+                self._conversation_history.append({"role": "system", "content": CONVERSATION_SYSTEM_PROMPT})
+            self._conversation_history.append({"role": "user", "content": prompt})
+            messages: list[dict[str, str]] | None = list(self._conversation_history)
+            self._pending_user_generation = generation
+        else:
+            messages = None
+            self._pending_user_generation = None
+
         model = self.settings.ollama_model
         endpoint = self.settings.ollama_url
         self._set_text(self.response_view, "")
@@ -1121,6 +1250,7 @@ class MainWindow(Adw.ApplicationWindow):
                     prompt=prompt,
                     cancel_event=cancel_event,
                     on_chunk=on_chunk,
+                    messages=messages,
                 )
                 flush_chunks()
                 idle(self._on_query_finished, answer, generation, cancel_event)
@@ -1147,6 +1277,16 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event):
             return False
         self.ask_button.set_sensitive(True)
+        if (
+            self.conversation_active
+            and self._conversation_history
+            and self._pending_user_generation == generation
+        ):
+            # This turn was abandoned (a spoken "cancel" or the Stop button),
+            # or its answer was lost: undo the user turn pushed when it started
+            # so the model's history stays coherent.
+            self._conversation_history.pop()
+        self._pending_user_generation = None
         if cancel_event.is_set():
             self._set_status("AI request stopped.")
             return False
@@ -1160,6 +1300,7 @@ class MainWindow(Adw.ApplicationWindow):
             buffer.set_text(spoken)
             self._scroll_to_end(self.response_view)
         if spoken and self.conversation_active:
+            self._conversation_history.append({"role": "assistant", "content": spoken})
             self._conversation_speak(spoken)
         elif answer and self.settings.auto_speak:
             self.speak_response()
@@ -1171,6 +1312,15 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._query_is_current(generation, cancel_event) or cancel_event.is_set():
             return False
         self.ask_button.set_sensitive(True)
+        if (
+            self.conversation_active
+            and self._conversation_history
+            and self._pending_user_generation == generation
+        ):
+            # The turn produced no usable answer, so it must not sit in the
+            # conversation history as an unanswered question with no reply.
+            self._conversation_history.pop()
+        self._pending_user_generation = None
         self._toast(error)
         self._set_status(self._conversation_idle_status() if self.conversation_active else "AI request failed.")
         return False
