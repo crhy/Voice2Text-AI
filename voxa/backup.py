@@ -1,7 +1,7 @@
-"""Backup and restore for Voice2Text AI settings and local LLM configuration.
+"""Backup and restore for Voxa settings and local LLM configuration.
 
 Implements issue #26: an encrypted, integrity-checked backup of Ollama
-models/selections, the Ollama configuration, Voice2Text settings, and
+models/selections, the Ollama configuration, Voxa settings, and
 OpenCode configuration.
 
 Design notes
@@ -24,10 +24,10 @@ Design notes
   never silently overwrites a destination file that is newer than the
   backup's (``--force`` overrides).
 
-Command line (installed as ``v2t-backup``)::
+Command line (installed as ``voxa-backup``)::
 
-    v2t-backup create --output backup.tar.gz [-m MODEL ...]
-    v2t-backup restore backup.tar.gpg [--dry-run] [--only config] [--force]
+    voxa-backup create --output backup.tar.gz [-m MODEL ...]
+    voxa-backup restore backup.tar.gpg [--dry-run] [--only config] [--force]
 """
 
 from __future__ import annotations
@@ -127,11 +127,11 @@ def _now_iso() -> str:
 
 
 def _prompt_passphrase(label: str) -> str:
-    if os.environ.get("V2T_BACKUP_PASSPHRASE"):
-        return os.environ["V2T_BACKUP_PASSPHRASE"]
+    if os.environ.get("VOXA_BACKUP_PASSPHRASE"):
+        return os.environ["VOXA_BACKUP_PASSPHRASE"]
     if sys.stdin.isatty() is False:
         raise BackupError(
-            f"{label} is required: no TTY available. Pass --passphrase-file, or set V2T_BACKUP_PASSPHRASE."
+            f"{label} is required: no TTY available. Pass --passphrase-file, or set VOXA_BACKUP_PASSPHRASE."
         )
     value = getpass_from_stdin(label)
     confirm = getpass_from_stdin(f"{label} (confirm)")
@@ -180,7 +180,7 @@ def _gpg_passphrase_file(tmp_dir: Path, passphrase: str) -> Path:
 
 
 def _encrypt_file(source: Path, destination: Path, passphrase: str) -> None:
-    tmp_dir = Path(tempfile.mkdtemp(prefix="v2t-backup-"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="voxa-backup-"))
     pass_file = None
     try:
         pass_file = _gpg_passphrase_file(tmp_dir, passphrase)
@@ -211,7 +211,7 @@ def _encrypt_file(source: Path, destination: Path, passphrase: str) -> None:
 
 
 def _decrypt_file(source: Path, destination: Path, passphrase: str) -> None:
-    tmp_dir = Path(tempfile.mkdtemp(prefix="v2t-backup-"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="voxa-backup-"))
     pass_file = None
     try:
         pass_file = _gpg_passphrase_file(tmp_dir, passphrase)
@@ -301,7 +301,7 @@ class BackupPaths:
     home: Path
     ollama_models: Path | None = None
     ollama_config: Path | None = None
-    v2t_config: Path | None = None
+    voxa_config: Path | None = None
     opencode_dir: Path | None = None
 
     def __post_init__(self) -> None:
@@ -309,8 +309,8 @@ class BackupPaths:
             self.ollama_models = self.home / ".ollama" / "models"
         if self.ollama_config is None:
             self.ollama_config = self.home / ".ollama" / "config.json"
-        if self.v2t_config is None:
-            self.v2t_config = self.home / ".config" / "voice2text-ai" / "config.json"
+        if self.voxa_config is None:
+            self.voxa_config = self.home / ".config" / "voxa" / "config.json"
         if self.opencode_dir is None:
             self.opencode_dir = self.home / ".config" / "opencode"
 
@@ -467,7 +467,7 @@ def build_inventory(
 
     config_files: list[tuple[str, Path]] = []
     for label, path in (
-        ("voice2text", paths.v2t_config),
+        ("voxa", paths.voxa_config),
         ("ollama", paths.ollama_config),
     ):
         if path is not None and path.is_file():
@@ -517,8 +517,8 @@ def _tar_member_name(item: InvItem) -> str:
         label = item.name.split(":", 1)[1]
         if label.startswith("opencode:"):
             return f"{ITEMS_TAR_PREFIX}.config/opencode/{label.split(':', 1)[1]}"
-        if label == "voice2text":
-            return f"{ITEMS_TAR_PREFIX}.config/voice2text-ai/config.json"
+        if label == "voxa":
+            return f"{ITEMS_TAR_PREFIX}.config/voxa/config.json"
         if label == "ollama":
             return f"{ITEMS_TAR_PREFIX}.ollama/config.json"
         return f"{ITEMS_TAR_PREFIX}.config/{label}.json"
@@ -637,7 +637,7 @@ def create_backup(
     # model blobs).
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _fd_staged, _staged_name = tempfile.mkstemp(
-        prefix="v2t-backup-", suffix=".tar.gz", dir=str(output_path.parent)
+        prefix="voxa-backup-", suffix=".tar.gz", dir=str(output_path.parent)
     )
     os.close(_fd_staged)
     plaintext = Path(_staged_name)
@@ -646,7 +646,7 @@ def create_backup(
         "created": _now_iso(),
         "hostname": platform.node(),
         "app_version": APP_VERSION,
-        "app_id": "io.github.crhy.voice2textai",
+        "app_id": "io.github.crhy.voxa",
         "models": [
             {
                 "name": model.name,
@@ -724,9 +724,9 @@ def _open_archive(archive_path: Path, passphrase: str | None = None) -> tuple[ta
         if passphrase is None:
             raise BackupError(
                 f"{archive_path.name} is encrypted. Provide --passphrase-file, or set "
-                "V2T_BACKUP_PASSPHRASE, then retry."
+                "VOXA_BACKUP_PASSPHRASE, then retry."
             )
-        tmp_dir = Path(tempfile.mkdtemp(prefix="v2t-backup-"))
+        tmp_dir = Path(tempfile.mkdtemp(prefix="voxa-backup-"))
         tmp_path = tmp_dir / "plain.tar.gz"
         _decrypt_file(archive_path, tmp_path, passphrase)
         return tarfile.open(tmp_path, "r:gz"), tmp_path, True
@@ -754,7 +754,12 @@ def _restore_destination(entry: dict[str, Any], root: Path) -> Path:
     key = entry["key"]
     if not key.startswith(ITEMS_TAR_PREFIX):
         raise BackupError(f"Internal error: unexpected archive key {key!r}.")
-    return root / key[len(ITEMS_TAR_PREFIX) :]
+    rel = key[len(ITEMS_TAR_PREFIX) :]
+    # Archives created before 0.6 stored the app config under the old
+    # ``.config/voice2text-ai`` directory; restore it to the new location.
+    if rel == ".config/voice2text-ai/config.json":
+        rel = ".config/voxa/config.json"
+    return root / rel
 
 
 def _item_matches_filters(entry: dict[str, Any], only_kinds: set[str] | None, only_names: set[str] | None) -> bool:
@@ -858,8 +863,8 @@ def restore_backup(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="v2t-backup",
-        description="Back up and restore Voice2Text AI settings, Ollama model selections/models, and OpenCode configuration.",
+        prog="voxa-backup",
+        description="Back up and restore Voxa settings, Ollama model selections/models, and OpenCode configuration.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -867,7 +872,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "create",
         help="Create an encrypted, integrity-checked backup archive.",
         description=(
-            "Create a backup of Voice2Text settings, Ollama configuration and model "
+            "Create a backup of Voxa settings, Ollama configuration and model "
             "manifests, and OpenCode configuration. Model blobs are only included when "
             "explicitly selected (-m/--model or --all-models) because they can be re-pulled "
             "with `ollama pull`."

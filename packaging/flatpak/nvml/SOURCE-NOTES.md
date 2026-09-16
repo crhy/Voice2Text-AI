@@ -47,6 +47,6 @@ URL keeping the same install paths — no downstream changes needed.
 
 The `nvidia-smi-libs` module (x86_64 only) copies both files into
 `/app/lib/nvml/`, mirroring the existing `/app/lib/cuda/` layout. The
-`voice2text-ai` wrapper prepends `/app/lib/nvml` to `PATH` and appends it to
+`voxa` wrapper prepends `/app/lib/nvml` to `PATH` and appends it to
 `LD_LIBRARY_PATH`, so both the subprocess probe and the `libnvidia-ml`
 dlopen resolve inside the sandbox.

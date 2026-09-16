@@ -1,9 +1,9 @@
 #!/bin/sh
 
-# In-sandbox entry point for the Voice2Text AI backup/restore tool.
+# In-sandbox entry point for the Voxa backup/restore tool.
 # The sandboxed home contains no app data; pass --home-dir (or back up to a
 # location reachable via --filesystem=host) to point at the host's paths.
-PYTHONPATH="/app/lib/voice2text-ai${PYTHONPATH:+:$PYTHONPATH}"
+PYTHONPATH="/app/lib/voxa${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
 
-exec python3 -m voice2text.backup "$@"
+exec python3 -m voxa.backup "$@"
