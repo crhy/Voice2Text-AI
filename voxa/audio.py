@@ -90,7 +90,7 @@ class AudioCapture:
             sink.set_property("drop", True)
         sink.connect("new-sample", self._on_sample, on_level)
 
-        pipeline = Gst.Pipeline.new("voice2text-capture")
+        pipeline = Gst.Pipeline.new("voxa-capture")
         for element in (source, convert, resample, capsfilter, sink):
             pipeline.add(element)
         if not source.link(convert) or not convert.link(resample) or not resample.link(capsfilter) or not capsfilter.link(sink):

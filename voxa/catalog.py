@@ -32,7 +32,7 @@ from pathlib import Path
 from .hardware import MODEL_CATALOG, ModelSuggestion
 
 LIBRARY_URL = "https://ollama.com/library"
-_USER_AGENT = "voice2text-ai model catalog refresh"
+_USER_AGENT = "voxa model catalog refresh"
 
 # Families worth following across generations. Only plain ones are considered:
 # a name that is a word plus an optional version, which excludes the
@@ -229,7 +229,7 @@ class CatalogCache:
     def __init__(self, path: Path | None = None) -> None:
         if path is None:
             base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-            path = base / "voice2text-ai" / "model-catalog.json"
+            path = base / "voxa" / "model-catalog.json"
         self.path = path
 
     def load(

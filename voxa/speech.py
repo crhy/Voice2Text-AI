@@ -233,7 +233,7 @@ class SpeechService:
             if cancel_event.is_set():
                 return
             with tempfile.NamedTemporaryFile(
-                prefix="voice2text-",
+                prefix="voxa-",
                 suffix=".wav",
                 delete=False,
             ) as handle:

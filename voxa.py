@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from voice2text.__main__ import main
+from voxa.__main__ import main
 
 if __name__ == "__main__":
     raise SystemExit(main())
