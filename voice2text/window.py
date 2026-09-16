@@ -103,6 +103,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._installing = False
         self._has_gpu = False
         self._gpu_poll_stop: threading.Event | None = None
+        self._model_combo_updating = False
 
         self._build_ui()
         self._install_actions()
@@ -189,9 +190,16 @@ class MainWindow(Adw.ApplicationWindow):
         self.gpu_box.append(self.gpu_level)
         self.gpu_box.append(self.gpu_label)
 
+        self.model_combo = Gtk.DropDown()
+        self.model_combo.set_visible(False)
+        self.model_combo.add_css_class("model-select")
+        self.model_combo.set_tooltip_text("Ollama model used by Ask AI")
+        self.model_combo.connect("notify::selected", self._on_model_selected)
+
         self.status_box.append(self.status_spinner)
         self.status_box.append(self.status_label)
         self.status_box.append(self.gpu_box)
+        self.status_box.append(self.model_combo)
         self.status_box.append(self.level)
         root.append(self.status_box)
         self._install_status_css()
@@ -298,7 +306,12 @@ class MainWindow(Adw.ApplicationWindow):
         if display is None:
             return
         provider = Gtk.CssProvider()
-        provider.load_from_data(b".status-strip { background-color: @window_bg_color; }")
+        provider.load_from_data(
+            b"""
+            .status-strip { background-color: @window_bg_color; }
+            .model-select { min-width: 170px; }
+            """
+        )
         Gtk.StyleContext.add_provider_for_display(
             display,
             provider,
@@ -454,7 +467,35 @@ class MainWindow(Adw.ApplicationWindow):
         if models and self.settings.ollama_model not in models:
             self.settings.ollama_model = models[0]
             self.config_store.save(self.settings)
+        self._apply_model_combo(models)
         return False
+
+    def _apply_model_combo(self, models: list[str]) -> None:
+        if not models:
+            self.model_combo.set_visible(False)
+            return
+        selected = (
+            models.index(self.settings.ollama_model)
+            if self.settings.ollama_model in models
+            else 0
+        )
+        self._model_combo_updating = True
+        self.model_combo.set_model(Gtk.StringList.new(models))
+        self.model_combo.set_selected(selected)
+        self.model_combo.set_visible(True)
+        self._model_combo_updating = False
+
+    def _on_model_selected(self, _combo: Gtk.DropDown, _property: str) -> None:
+        # Programmatic set_model/set_selected also emit this signal; the flag
+        # above skips that pass so only real user picks are persisted.
+        if self._model_combo_updating or not self.ollama_models:
+            return
+        selected = min(self.model_combo.get_selected(), len(self.ollama_models) - 1)
+        model = self.ollama_models[selected]
+        if model != self.settings.ollama_model:
+            self.settings.ollama_model = model
+            self.config_store.save(self.settings)
+            self._set_status(f"Asking with {model} from now on.")
 
     @staticmethod
     def _scroll_to_end(view: Gtk.TextView) -> None:
@@ -1198,14 +1239,16 @@ class MainWindow(Adw.ApplicationWindow):
         dialog = Adw.PreferencesDialog()
         dialog.set_title("Preferences")
         if hasattr(dialog, "set_content_width"):
-            dialog.set_content_width(760)
+            dialog.set_content_width(820)
         else:
-            dialog.set_size_request(760, -1)
-        page = Adw.PreferencesPage()
-        dialog.add(page)
+            dialog.set_size_request(820, -1)
 
-        appearance_group = Adw.PreferencesGroup(title="Appearance")
-        page.add(appearance_group)
+        # One page per topic so settings don't share one long crammed column:
+        # the dialog renders a sidebar with a row per page.
+        appearance_page = Adw.PreferencesPage(title="Appearance", icon_name="color-select-symbolic")
+        appearance_page.set_description("How the window looks on your desktop.")
+        appearance_group = Adw.PreferencesGroup()
+        appearance_page.add(appearance_group)
         appearance_row = Adw.ComboRow(
             title="Color scheme",
             subtitle="Follow the desktop or choose an explicit light or dark appearance",
@@ -1213,9 +1256,12 @@ class MainWindow(Adw.ApplicationWindow):
         appearance_row.set_model(Gtk.StringList.new(APPEARANCE_LABELS))
         appearance_row.set_selected(APPEARANCE_VALUES.index(self.settings.appearance))
         appearance_group.add(appearance_row)
+        dialog.add(appearance_page)
 
-        speech_group = Adw.PreferencesGroup(title="Speech recognition")
-        page.add(speech_group)
+        speech_page = Adw.PreferencesPage(title="Speech recognition", icon_name="microphone-sensitivity-high-symbolic")
+        speech_page.set_description("How spoken input is transcribed.")
+        speech_group = Adw.PreferencesGroup()
+        speech_page.add(speech_group)
 
         whisper_row = Adw.ComboRow(title="Whisper model", subtitle="Smaller models use less memory and start faster")
         whisper_model = Gtk.StringList.new(WHISPER_MODELS)
@@ -1249,9 +1295,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         mic_row.connect("notify::selected", update_mic_description)
         speech_group.add(mic_row)
+        dialog.add(speech_page)
 
-        ai_group = Adw.PreferencesGroup(title="Local AI")
-        page.add(ai_group)
+        ai_page = Adw.PreferencesPage(title="Local AI", icon_name="system-run-symbolic")
+        ai_page.set_description("The Ollama server that answers questions on this machine.")
+        ai_group = Adw.PreferencesGroup()
+        ai_page.add(ai_group)
         model_names = self.ollama_models or ["No models found"]
         ai_row = Adw.ComboRow(title="Ollama model", subtitle=self._hardware_summary)
         ai_row.set_model(Gtk.StringList.new(model_names))
@@ -1281,18 +1330,23 @@ class MainWindow(Adw.ApplicationWindow):
         manage_button.connect("clicked", lambda *_: self._show_model_manager())
         manage_row.add_suffix(manage_button)
         ai_group.add(manage_row)
+        dialog.add(ai_page)
 
+        conversation_page = Adw.PreferencesPage(title="Conversation mode", icon_name="microphone-sensitivity-muted-symbolic")
+        conversation_page.set_description("Hands-free exchanges: say the wake word, then your question.")
         conversation_group = Adw.PreferencesGroup(
-            title="Conversation mode",
-            description="Say the wake word to start talking, then ask something — it's transcribed and sent to the Ollama model above automatically.",
+            description="Say the wake word to start talking, then ask something — it's transcribed and sent to the Ollama model automatically.",
         )
-        page.add(conversation_group)
+        conversation_page.add(conversation_group)
         wake_word_row = Adw.EntryRow(title="Wake word")
         wake_word_row.set_text(self.settings.wake_word)
         conversation_group.add(wake_word_row)
+        dialog.add(conversation_page)
 
-        voice_group = Adw.PreferencesGroup(title="Speech output")
-        page.add(voice_group)
+        voice_page = Adw.PreferencesPage(title="Speech output", icon_name="audio-volume-high-symbolic")
+        voice_page.set_description("The voice that reads AI responses aloud.")
+        voice_group = Adw.PreferencesGroup()
+        voice_page.add(voice_group)
         voice_row = Adw.ComboRow(
             title="Voice",
             subtitle="Natural online voice with automatic offline fallback",
@@ -1307,6 +1361,7 @@ class MainWindow(Adw.ApplicationWindow):
         rate_row.set_title("Speaking rate")
         rate_row.set_value(self.settings.tts_rate)
         voice_group.add(rate_row)
+        dialog.add(voice_page)
 
         dialog.connect(
             "closed",
