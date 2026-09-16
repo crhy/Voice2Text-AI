@@ -72,22 +72,31 @@ class OllamaClient:
         cancel_event: threading.Event,
         on_chunk: Callable[[str], None],
         num_predict: int = 768,
+        messages: list[dict] | None = None,
     ) -> str:
         if not model:
             raise OllamaError("No Ollama model is selected.")
         if not prompt.strip():
             raise OllamaError("There is no text to send.")
 
-        payload = json.dumps(
-            {
-                "model": model,
-                "prompt": prompt.strip(),
-                "stream": True,
-                "options": {"num_predict": num_predict},
-            }
-        ).encode("utf-8")
+        # With a message history we use the chat endpoint so the model keeps
+        # the earlier turns of a conversation; without one the plain
+        # generate endpoint stays the cheap single-shot path.
+        chat = messages is not None
+        body: dict = {
+            "model": model,
+            "stream": True,
+            "options": {"num_predict": num_predict},
+        }
+        if chat:
+            body["messages"] = messages
+        else:
+            body["prompt"] = prompt.strip()
+        endpoint = "/api/chat" if chat else "/api/generate"
+
+        payload = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
-            f"{self.base_url}/api/generate",
+            f"{self.base_url}{endpoint}",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -124,7 +133,13 @@ class OllamaClient:
                         # UI, and raise after the connection is closed.
                         stream_error = str(event["error"])
                         break
-                    text = event.get("response", "")
+                    # Chat events carry the stream in a message object; the
+                    # generate endpoint uses a plain "response" string.
+                    message = event.get("message")
+                    if isinstance(message, dict):
+                        text = message.get("content", "")
+                    else:
+                        text = event.get("response", "")
                     if text:
                         chunks.append(text)
                         on_chunk(text)

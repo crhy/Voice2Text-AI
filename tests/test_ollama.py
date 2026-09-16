@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import threading
 from unittest.mock import patch
 
@@ -92,6 +93,38 @@ def test_streaming_response_calls_chunk_callback() -> None:
         )
     assert answer == "Hello world"
     assert chunks == ["Hello", " world"]
+
+
+def test_generate_stream_uses_chat_endpoint_when_messages_are_given() -> None:
+    response = FakeResponse(
+        b'{"message":{"role":"assistant","content":"Hi"},"done":false}\n'
+        b'{"message":{"role":"assistant","content":" there"},"done":true,"done_reason":"stop"}\n'
+    )
+    chunks: list[str] = []
+    history = [
+        {"role": "system", "content": "be brief"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "and you?"},
+    ]
+    with patch("urllib.request.urlopen", return_value=response) as mocked:
+        answer = OllamaClient().generate_stream(
+            model="test",
+            prompt="and you?",
+            cancel_event=threading.Event(),
+            on_chunk=chunks.append,
+            messages=history,
+        )
+    assert answer == "Hi there"
+    assert chunks == ["Hi", " there"]
+    request = mocked.call_args[0][0]
+    assert request.get_method() == "POST"
+    assert request.full_url.endswith("/api/chat")
+    body = json.loads(request.data)
+    assert body["model"] == "test"
+    assert body["stream"] is True
+    assert body["messages"] == history
+    assert "prompt" not in body
 
 
 def test_strip_reasoning_removes_a_matched_think_block():
