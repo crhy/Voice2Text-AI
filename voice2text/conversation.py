@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 from collections.abc import Callable
 
@@ -25,6 +26,50 @@ def strip_wake_word(text: str, wake_word: str) -> str | None:
         return None
     remainder = text[:index] + text[index + len(wake) :]
     return remainder.strip(" ,.!?—-\t\n")
+
+
+# Utterances that end a conversation turn, matched exactly (whitespace and
+# punctuation normalized) so a normal question can never be mistaken for one.
+# "cancel" abandons the current question and returns to listening for the
+# wake word; "goodbye" ends conversation mode altogether.
+_CANCEL_PHRASES = frozenset(
+    {
+        "cancel",
+        "cancelled",
+        "stop",
+        "stop talking",
+        "stop it",
+        "never mind",
+        "nevermind",
+        "forget it",
+    }
+)
+_GOODBYE_PHRASES = frozenset(
+    {
+        "goodbye",
+        "bye",
+        "goodbye for now",
+        "see you",
+        "see ya",
+        "that's all",
+        "thats all",
+        "done",
+    }
+)
+
+
+def detect_exit_phrase(text: str) -> str | None:
+    """Return "cancel" or "goodbye" if the utterance ends the conversation.
+
+    Comparison is exact after casefolding and stripping punctuation, so
+    "Never mind." and "Goodbye!" match while "never mind that" does not.
+    """
+    normalized = " ".join(re.sub(r"[^a-z0-9'\s]", " ", text.casefold()).split())
+    if normalized in _GOODBYE_PHRASES:
+        return "goodbye"
+    if normalized in _CANCEL_PHRASES:
+        return "cancel"
+    return None
 
 
 class ConversationController:
@@ -57,6 +102,7 @@ class ConversationController:
         on_prompt: Callable[[str], None],
         on_status: Callable[[str], None],
         on_error: Callable[[str], None],
+        on_exit: Callable[[str], None] | None = None,
     ) -> None:
         # The wake phase runs constantly in the background, so it uses a small,
         # dedicated model (see WAKE_WHISPER_MODEL in window.py) instead of
@@ -73,14 +119,24 @@ class ConversationController:
         self.on_prompt = on_prompt
         self.on_status = on_status
         self.on_error = on_error
+        self.on_exit = on_exit or (lambda _kind: None)
         self.queue: queue.Queue[tuple[bytes, float] | None] = queue.Queue(maxsize=80)
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self._muted = threading.Event()
+        # An utterance currently heard becomes a prompt without requiring the
+        # wake word first (set by the caller after a barge-in, so the user can
+        # just keep talking after interrupting a spoken reply).
+        self.waiting_for_prompt = False
+
+    @property
+    def muted(self) -> bool:
+        return self._muted.is_set()
 
     def start(self) -> None:
         self.stop_event.clear()
         self._muted.clear()
+        self.waiting_for_prompt = False
         self.thread = threading.Thread(target=self._run, name="conversation-worker", daemon=True)
         self.thread.start()
 
@@ -107,8 +163,17 @@ class ConversationController:
     def unmute(self) -> None:
         self._muted.clear()
 
+    def arm_prompt(self) -> None:
+        """Skip the wake word: the next utterance becomes a prompt directly.
+
+        Called by the UI after the user barge-in interrupts a spoken reply,
+        so they can keep talking without repeating the wake word.
+        """
+        self.waiting_for_prompt = True
+
     def stop(self) -> None:
         self.stop_event.set()
+        self.waiting_for_prompt = False
         try:
             self.queue.put_nowait(None)
         except queue.Full:
@@ -128,25 +193,41 @@ class ConversationController:
 
     def _transcribe(self, segment: bytes, whisper: WhisperService) -> str:
         try:
+            self.on_status("Transcribing…")
             return whisper.transcribe(segment, self.language)
         except Exception as exc:  # noqa: BLE001 - worker boundary
             self.on_error(str(exc))
             return ""
 
     def _run(self) -> None:
-        waiting_for_prompt = False
         while not self.stop_event.is_set():
-            idle_timeout = self.PROMPT_TIMEOUT_SECONDS if waiting_for_prompt else None
+            idle_timeout = self.PROMPT_TIMEOUT_SECONDS if self.waiting_for_prompt else None
             segment = self._next_segment(idle_timeout)
+            # Re-read after the segment: a barge-in can arm the prompt state
+            # while the user is mid-utterance, and that utterance must be the
+            # prompt, not a wake-word candidate.
+            waiting_for_prompt = self.waiting_for_prompt
             if segment is None:
                 if waiting_for_prompt and not self.stop_event.is_set():
                     self.on_status(f"Didn't catch that — say “{self.wake_word}” again.")
-                waiting_for_prompt = False
+                self.waiting_for_prompt = False
                 continue
 
             whisper = self.prompt_whisper if waiting_for_prompt else self.wake_whisper
             text = self._transcribe(segment, whisper)
             if not text:
+                continue
+
+            exit_kind = detect_exit_phrase(text)
+            if exit_kind is not None:
+                # The user is ending things: abandon any in-flight prompt and
+                # either go back to waiting for the wake word (cancel) or
+                # leave conversation mode entirely (goodbye — the caller stops
+                # us when it hears that).
+                self.waiting_for_prompt = False
+                self.on_exit(exit_kind)
+                if exit_kind == "goodbye":
+                    break
                 continue
 
             if not waiting_for_prompt:
@@ -158,7 +239,7 @@ class ConversationController:
                     self.on_prompt(remainder)
                 else:
                     self.on_status("Listening for your request…")
-                    waiting_for_prompt = True
+                    self.waiting_for_prompt = True
             else:
                 self.on_prompt(text)
-                waiting_for_prompt = False
+                self.waiting_for_prompt = False
