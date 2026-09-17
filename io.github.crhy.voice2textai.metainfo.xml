@@ -23,6 +23,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.1" date="2026-09-17">
+      <description>
+        <p>Microphone selection now excludes monitor (loopback) sources, so a picked or previously saved microphone can no longer resolve to a PipeWire or PulseAudio monitor that would record the machine's own playback instead of your voice. If a saved profile still references a monitor, capturing starts with a clear error instead of silent audio.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-16">
       <description>
         <p>Hands-free conversation is now a real assistant loop: the model remembers earlier turns of the exchange (sent as a chat history), you can talk over a spoken reply to interrupt it and keep talking, and "cancel" or "goodbye" ends the conversation by voice.</p>
