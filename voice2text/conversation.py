@@ -6,7 +6,18 @@ import threading
 from collections.abc import Callable
 
 from .dictation import segment_stream
+from .listening import (
+    clarification_prompt,
+    ends_request,
+    is_follow_up,
+    needs_clarification,
+    resolve_follow_up,
+)
 from .transcription import WhisperService
+
+# PCM is captured at 16 kHz, signed 16-bit little-endian, so byte length
+# converts to seconds with the same arithmetic ``segment_stream`` uses.
+_BYTES_PER_SECOND = 16000 * 2
 
 
 def strip_wake_word(text: str, wake_word: str) -> str | None:
@@ -83,7 +94,11 @@ class ConversationController:
     the actual command, since accuracy matters there but not during idle
     listening. A dedicated low-latency wake-word engine could replace the
     wake phase later without changing the caller contract (``feed``/
-    ``start``/``stop`` plus the four callbacks).
+    ``start``/``stop`` plus the four callbacks). A captured request is only
+    sent when it really ended: a segment cut by the length cap keeps the
+    controller listening, an unsure or content-free transcript is clarified
+    instead of answered, and a bare follow-up is resolved against the previous
+    request — see :mod:`voice2text.listening`.
     """
 
     PROMPT_TIMEOUT_SECONDS = 8.0
@@ -128,6 +143,13 @@ class ConversationController:
         # wake word first (set by the caller after a barge-in, so the user can
         # just keep talking after interrupting a spoken reply).
         self.waiting_for_prompt = False
+        # What the user last asked, so a bare follow-up ("why?") can be
+        # resolved against it instead of being sent to the model alone.
+        self.last_prompt = ""
+        # Confidence of the most recent transcript, in 0..1; 1.0 when the
+        # injected service cannot report one, so nothing is clarified on
+        # grounds the assistant has no evidence for.
+        self.last_confidence = 1.0
 
     @property
     def muted(self) -> bool:
@@ -170,6 +192,7 @@ class ConversationController:
         so they can keep talking without repeating the wake word.
         """
         self.waiting_for_prompt = True
+        self.last_confidence = 1.0
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -194,7 +217,14 @@ class ConversationController:
     def _transcribe(self, segment: bytes, whisper: WhisperService) -> str:
         try:
             self.on_status("Transcribing…")
-            return whisper.transcribe(segment, self.language)
+            confidence_with = getattr(whisper, "transcribe_with_confidence", None)
+            if confidence_with is None:
+                # A service that cannot report confidence: treat the transcript
+                # as believed rather than inventing a doubt it cannot measure.
+                self.last_confidence = 1.0
+                return whisper.transcribe(segment, self.language)
+            text, self.last_confidence = confidence_with(segment, self.language)
+            return text
         except Exception as exc:  # noqa: BLE001 - worker boundary
             self.on_error(str(exc))
             return ""
@@ -218,6 +248,8 @@ class ConversationController:
             if not text:
                 continue
 
+            segment_seconds = len(segment) / _BYTES_PER_SECOND
+
             exit_kind = detect_exit_phrase(text)
             if exit_kind is not None:
                 # The user is ending things: abandon any in-flight prompt and
@@ -236,10 +268,43 @@ class ConversationController:
                     continue
                 self.on_woken()
                 if remainder:
-                    self.on_prompt(remainder)
+                    self._deliver_prompt(remainder, segment_seconds)
                 else:
                     self.on_status("Listening for your request…")
                     self.waiting_for_prompt = True
             else:
-                self.on_prompt(text)
-                self.waiting_for_prompt = False
+                self._deliver_prompt(text, segment_seconds)
+
+    def _deliver_prompt(self, text: str, segment_seconds: float) -> None:
+        """Send a captured request, or keep listening instead of guessing.
+
+        Three cases hold the request back rather than sending it: the length
+        cap cut the user off mid-sentence, the transcript is too unsure (or
+        too content-free) to be trusted, or it is a bare follow-up that only
+        makes sense next to the previous request — in which case it is
+        resolved against that request before being sent.
+        """
+        if not ends_request(
+            segment_seconds,
+            self.silence_seconds,
+            self.max_segment_seconds,
+        ):
+            self.on_status("Still listening — you haven't finished speaking.")
+            self.waiting_for_prompt = True
+            return
+
+        if needs_clarification(text, self.last_confidence):
+            self.on_status(clarification_prompt(text, self.wake_word))
+            self.waiting_for_prompt = True
+            return
+
+        if is_follow_up(text) and self.last_prompt:
+            resolved = resolve_follow_up(self.last_prompt, text)
+            self.on_prompt(resolved)
+            self.last_prompt = resolved
+            self.waiting_for_prompt = False
+            return
+
+        self.on_prompt(text)
+        self.last_prompt = text
+        self.waiting_for_prompt = False

@@ -15,6 +15,26 @@ class TranscriptionError(RuntimeError):
     pass
 
 
+def _confidence_from_info(info: Any) -> float:
+    """Map Faster Whisper's segment statistics onto a 0..1 confidence.
+
+    ``avg_logprob`` is the mean log-probability per token (0 is certain, more
+    negative is less sure; in practice it stays inside roughly -1..0 for real
+    speech) and ``no_speech_prob`` is the model's own estimate that the audio
+    held no speech at all. Averaging the two — each pushed into 0..1 — means a
+    quiet, mumbled or hallucinated take is visibly less trusted than a clean
+    one instead of being thrown away.
+    """
+    try:
+        avg_logprob = float(getattr(info, "avg_logprob", 0.0) or 0.0)
+        no_speech_prob = float(getattr(info, "no_speech_prob", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    logprob_score = max(0.0, min(1.0, 1.0 + avg_logprob))
+    speech_score = max(0.0, min(1.0, 1.0 - no_speech_prob))
+    return round((logprob_score + speech_score) / 2.0, 3)
+
+
 def _cuda_compute_usable() -> bool:
     """True only when the CUDA *compute* stack (cuBLAS + cuDNN) can be loaded.
 
@@ -144,8 +164,22 @@ class WhisperService:
             pass
 
     def transcribe(self, pcm_s16le: bytes, language: str = "en") -> str:
+        return self.transcribe_with_confidence(pcm_s16le, language)[0]
+
+    def transcribe_with_confidence(
+        self,
+        pcm_s16le: bytes,
+        language: str = "en",
+    ) -> tuple[str, float]:
+        """Transcribe ``pcm_s16le`` and report how much the model believed it.
+
+        Returns ``(text, confidence)`` with confidence in 0..1. Callers that
+        need to tell a confident transcript from a guess (conversation mode
+        clarifies instead of answering a guess) use this; :meth:`transcribe`
+        is a wrapper over it for callers that only want the text.
+        """
         if not pcm_s16le:
-            return ""
+            return "", 0.0
         with self._lock:
             model = self._model
         if model is None:
@@ -153,7 +187,7 @@ class WhisperService:
 
         audio = np.frombuffer(pcm_s16le, dtype="<i2").astype(np.float32)
         audio /= 32768.0
-        segments, _info = model.transcribe(
+        segments, info = model.transcribe(
             audio,
             language=language or None,
             beam_size=1,
@@ -162,4 +196,7 @@ class WhisperService:
             condition_on_previous_text=False,
             word_timestamps=False,
         )
-        return " ".join(segment.text.strip() for segment in segments if segment.text.strip()).strip()
+        text = " ".join(
+            segment.text.strip() for segment in segments if segment.text.strip()
+        ).strip()
+        return text, _confidence_from_info(info)
