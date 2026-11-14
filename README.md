@@ -1,5 +1,9 @@
 # Voice2Text AI
 
+<p align="center">
+  <img src="icons/io.github.crhy.voice2textai-256.png" alt="Voice2Text AI medallion logo" width="160">
+</p>
+
 Fast native Linux dictation with local AI. Record from your microphone, have
 speech transcribed on-device with Faster Whisper, prompt a local Ollama model,
 and hear the answer spoken back with a natural neural voice and an offline

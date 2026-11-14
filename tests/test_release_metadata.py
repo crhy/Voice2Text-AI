@@ -60,6 +60,29 @@ def test_flatpak_uses_supported_runtime_and_python_wheels() -> None:
     assert "cp312" not in requirements
 
 
+def test_readme_leads_with_the_project_logo() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    logo = ROOT / "icons" / "io.github.crhy.voice2textai-256.png"
+    assert logo.is_file()
+
+    logo_ref = readme.find("icons/io.github.crhy.voice2textai-256.png")
+    screenshot = readme.find("docs/screenshots/")
+    assert logo_ref != -1
+    assert screenshot != -1
+    assert logo_ref < screenshot
+
+    # The 256 medallion is the identity the Flatpak installs and the desktop
+    # entry resolves, so the README must show the same bytes.
+    assert logo.read_bytes() == (
+        ROOT / "icons" / "io.github.crhy.voice2textai.png"
+    ).read_bytes()
+
+    # The repository-root logo.png is shared byte-for-byte with voxa's artwork;
+    # Voice2Text must never point the README at it.
+    assert not re.search(r'(\]\(|src=")logo\.png', readme)
+
+
 def test_application_icon_pack_is_complete() -> None:
     master = ROOT / "icons" / "io.github.crhy.voice2textai-1024.png"
     assert master.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
