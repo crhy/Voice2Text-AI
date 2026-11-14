@@ -113,6 +113,21 @@ flatpak-builder --user --install --force-clean build-dir io.github.crhy.voice2te
 Settings are stored in `$XDG_CONFIG_HOME/voice2text-ai/config.json` and edited
 from the Preferences dialog.
 
+### Programmable actions
+
+In conversation mode some phrases act instead of asking the model: **"play
+bossnova"** streams Soma FM's bossa-nova station, **"open \<bookmark\>"** opens
+a named bookmark, **"search for \<text\>"** looks the phrase up. Actions are
+stored in `$XDG_CONFIG_HOME/voice2text-ai/actions.json` as a versioned schema —
+trigger phrase, typed parameters, adapter, confirmation policy — and the app
+only ever runs a fixed argv list (`xdg-open`, `mpv`), never a shell string, so
+nothing heard from the microphone can be reinterpreted as a command. Two
+triggers that match equally well are reported as ambiguous rather than guessed.
+Privileged actions (messaging, deleting, spending) are refused unless they are
+explicitly permitted *and* marked for confirmation, and then they ask first.
+They are edited by hand or through import/export for now; the Preferences
+editor for them is still to come.
+
 Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).

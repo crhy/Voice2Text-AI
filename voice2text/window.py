@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 from collections import deque
@@ -11,6 +12,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from .actions import ActionError, ActionConflict, ActionStore, Match, match_action, plan  # noqa: E402
 from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refresh_due  # noqa: E402
 from .config import ConfigStore  # noqa: E402
@@ -94,6 +96,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.config_store = ConfigStore()
         self.settings = self.config_store.load()
+        self.action_store = ActionStore()
+        self.actions = self.action_store.load()
+        # The programmable action launched most recently, so a command that
+        # fails on the way out (a missing player, an unreachable stream) can
+        # be reported instead of failing silently behind the microphone.
+        self._action_process: subprocess.Popen | None = None
         self.style_manager = Adw.StyleManager.get_default()
         self._apply_appearance()
         self.whisper = WhisperService()
@@ -980,8 +988,87 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_conversation_prompt(self, text: str) -> bool:
         if not text:
             return False
+        try:
+            match = match_action(text, self.actions)
+        except ActionConflict as exc:
+            # Two triggers were equally specific: say so rather than guess.
+            self._toast(f"Ambiguous: {exc}")
+            self._set_status(self._conversation_idle_status())
+            return False
+        if match is not None:
+            self._run_action(match)
+            return False
         self.ask_ai(text)
         return False
+
+    def _run_action(self, match: Match) -> None:
+        # plan() is the reversible test mode: it returns the argv an action would
+        # run without running anything, so a confirm-gated action can show its
+        # exact command line before the user agrees to it.
+        try:
+            argv = plan(match.action, match.text)
+        except (ActionError, ActionConflict) as exc:
+            self._toast(str(exc))
+            self._set_status(self._conversation_idle_status())
+            return
+        if match.action.confirm:
+            self._confirm_action(match, argv)
+            return
+        self._execute_action(match, argv)
+
+    def _execute_action(self, match: Match, argv: list[str]) -> None:
+        try:
+            # argv is a list, never a shell string: nothing heard from the
+            # microphone is ever re-parsed by a shell.
+            self._action_process = subprocess.Popen(
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            self._toast(f"Could not start {argv[0]}: {exc.strerror}")
+            self._set_status(self._conversation_idle_status())
+            return
+        self._set_status(f"Action {match.action.id} — {argv[0]}")
+        GLib.timeout_add_seconds(2, self._report_action_process, 6)
+
+    def _report_action_process(self, remaining: int) -> bool:
+        process = self._action_process
+        if process is None:
+            return False
+        if process.poll() is None:
+            if remaining > 1:
+                GLib.timeout_add_seconds(1, self._report_action_process, remaining - 1)
+            return False
+        if process.returncode:
+            self._toast(f"{process.args[0]} exited with status {process.returncode}.")
+        self._action_process = None
+        self._set_status(self._conversation_idle_status())
+        return False
+
+    def _confirm_action(self, match: Match, argv: list[str]) -> None:
+        command = GLib.markup_escape_text(" ".join(argv))
+        said = GLib.markup_escape_text(match.text)
+        confirm = Adw.AlertDialog(
+            heading=f"Run {match.action.id}?",
+            body=(
+                f"“{said}” would run {command}. "
+                "This action is marked as one to confirm before it happens."
+            ),
+        )
+        confirm.add_response("cancel", "Cancel")
+        confirm.add_response("run", "Run it")
+        confirm.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
+        confirm.set_default_response("cancel")
+        confirm.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            if response != "run":
+                return
+            self._execute_action(match, argv)
+
+        confirm.connect("response", on_response)
+        confirm.present(self)
 
     def _on_conversation_exit(self, kind: str) -> bool:
         # The user ended the exchange by voice: cancel any in-flight request,
