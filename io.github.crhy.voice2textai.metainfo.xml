@@ -12,6 +12,9 @@
     <p>Voice2Text AI records from your microphone, transcribes speech locally with Faster Whisper, sends prompts to a local Ollama model, and reads responses aloud with a natural neural voice and an offline eSpeak NG fallback.</p>
     <p>The interface follows the system GTK and libadwaita theme, supports Wayland and X11, and uses PipeWire or PulseAudio through GStreamer.</p>
   </description>
+  <category>AudioVideo</category>
+  <category>Audio</category>
+  <category>Utility</category>
   <launchable type="desktop-id">io.github.crhy.voice2textai.desktop</launchable>
   <url type="homepage">https://github.com/crhy/Voice2Text-AI</url>
   <url type="bugtracker">https://github.com/crhy/Voice2Text-AI/issues</url>

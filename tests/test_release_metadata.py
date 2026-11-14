@@ -27,6 +27,21 @@ def test_license_metadata_matches_license_file() -> None:
     assert (ROOT / "LICENSE").read_text(encoding="utf-8").startswith("MIT License")
 
 
+def test_desktop_entry_and_metainfo_prefer_sound_and_video() -> None:
+    desktop = (ROOT / "io.github.crhy.voice2textai.desktop").read_text(encoding="utf-8")
+    match = re.search(r"^Categories=(\S*)$", desktop, re.MULTILINE)
+    assert match is not None
+    assert match.group(1) == "AudioVideo;Audio;Utility;"
+
+    categories = [c for c in match.group(1).split(";") if c]
+    assert categories[0] == "AudioVideo"
+    assert "Accessibility" not in categories
+
+    metainfo = ET.parse(ROOT / "io.github.crhy.voice2textai.metainfo.xml").getroot()
+    metainfo_categories = {node.text for node in metainfo.findall("./category")}
+    assert metainfo_categories == set(categories)
+
+
 def test_flatpak_manifest_and_launcher_agree() -> None:
     manifest = (ROOT / "io.github.crhy.voice2textai.yml").read_text(encoding="utf-8")
     launcher = (ROOT / "packaging/flatpak/voice2text-ai").read_text(encoding="utf-8")
