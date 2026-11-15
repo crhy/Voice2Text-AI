@@ -117,6 +117,9 @@ Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).
 
+Supervised OpenCode continuations — one allowlisted step at a time, audited and
+pausable, off by default — are described in [docs/OPENCODE.md](docs/OPENCODE.md).
+
 ## Acknowledgements
 
 - [Faster Whisper](https://github.com/SYSTRAN/faster-whisper) for on-device transcription

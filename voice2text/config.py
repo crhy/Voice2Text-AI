@@ -3,9 +3,26 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
+
+
+def _clean_dirs(values: list[str]) -> list[str]:
+    """Trim the allowlist, drop blank entries and keep it in order.
+
+    A blank entry is never a wildcard: an empty allowlist means nothing may
+    be touched, so entries that resolve to nothing are removed rather than
+    left to mean "everything".
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value).strip()
+        if text and text not in seen:
+            seen.add(text)
+            cleaned.append(text)
+    return cleaned
 
 
 @dataclass(slots=True)
@@ -24,6 +41,14 @@ class Settings:
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
     wake_word: str = "computer"
+    # OpenCode continuation is opt-in per directory: the feature stays off
+    # until the user turns it on *and* names a project inside an allowed
+    # directory, and auto-run needs a second switch on top of that.
+    opencode_enabled: bool = False
+    opencode_auto_run: bool = False
+    opencode_project: str = ""
+    opencode_allowed_dirs: list[str] = field(default_factory=list)
+    opencode_model: str = ""
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -36,6 +61,14 @@ class Settings:
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
         self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
+        self.opencode_enabled = bool(self.opencode_enabled)
+        self.opencode_auto_run = bool(self.opencode_auto_run)
+        self.opencode_project = self.opencode_project.strip()
+        # Keep the model as the CLI's own "provider/model" text; anything the
+        # user typed is passed through unchanged so a new provider naming
+        # scheme does not get rejected by this app.
+        self.opencode_model = self.opencode_model.strip()[:80]
+        self.opencode_allowed_dirs = _clean_dirs(self.opencode_allowed_dirs)
         return self
 
 

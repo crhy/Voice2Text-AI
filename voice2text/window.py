@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
@@ -19,6 +20,17 @@ from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
+from .opencode import (  # noqa: E402
+    AuditLog,
+    OpenCodeError,
+    PlanStore,
+    continuation_argv,
+    parse_reply_text,
+    project_allowed,
+    read_only_status,
+    run_continuation,
+    suggested_next_actions,
+)
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
 
@@ -50,6 +62,9 @@ CONVERSATION_SYSTEM_PROMPT = (
 # requirement keeps a cough from killing the reply.
 BARGE_IN_GRACE_SECONDS = 0.6
 BARGE_IN_STREAK = 3
+# OpenCode continuation: one supervised run at a time, time-bounded, and only
+# ever inside the directories the user listed in Preferences.
+OPENCODE_RUN_TIMEOUT_SECONDS = 600.0
 
 
 def idle(callback: Callable, *args) -> None:
@@ -130,6 +145,14 @@ class MainWindow(Adw.ApplicationWindow):
         self._has_gpu = False
         self._gpu_poll_stop: threading.Event | None = None
         self._model_combo_updating = False
+        # OpenCode continuation state: the plan/checkpoint store, the audit
+        # log, and the kill switch for the one supervised run at a time.
+        self.opencode_plan = PlanStore()
+        self.opencode_audit = AuditLog()
+        self.opencode_stop: threading.Event | None = None
+        self._opencode_running = False
+        self._opencode_paused = False
+        self._opencode_status_generation = 0
 
         self._build_ui()
         self._install_actions()
@@ -173,6 +196,8 @@ class MainWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
         menu.append("Keyboard Shortcuts", "win.shortcuts")
+        menu.append("OpenCode status", "win.opencode-status")
+        menu.append("OpenCode continue", "win.opencode-continue")
         menu.append("About Voice2Text AI", "app.about")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         header.pack_end(menu_button)
@@ -269,6 +294,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.stop_button.connect("clicked", lambda *_: self.stop_current_work())
         action_bar.pack_end(self.stop_button)
 
+        self.opencode_button = Gtk.Button(label="OpenCode")
+        self.opencode_button.set_tooltip_text(
+            "Run one supervised OpenCode continuation in the allowed project"
+        )
+        self.opencode_button.set_sensitive(self.settings.opencode_enabled)
+        self.opencode_button.connect("clicked", lambda *_: self.continue_with_opencode())
+        action_bar.pack_end(self.opencode_button)
+
     def _build_editor(self, title: str, *, editable: bool, transcript: bool) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_top(6)
@@ -313,6 +346,8 @@ class MainWindow(Adw.ApplicationWindow):
             "copy": self.copy_transcript,
             "copy-response": self.copy_response,
             "clear": self.clear_all,
+            "opencode-status": self.show_opencode_status,
+            "opencode-continue": self.continue_with_opencode,
         }
         for name, callback in actions.items():
             action = Gio.SimpleAction.new(name, None)
@@ -876,6 +911,10 @@ class MainWindow(Adw.ApplicationWindow):
     def _auto_stop_recording(self) -> bool:
         if self.listening:
             self.stop_recording()
+        # The one automatic hook: a transcript that finished by itself can
+        # hand its next step to OpenCode. Needs both switches on, and still
+        # passes every allowlist check a manual press passes.
+        self._maybe_auto_continue()
         return False
 
     def _capture_error(self, error: str) -> bool:
@@ -1345,6 +1384,203 @@ class MainWindow(Adw.ApplicationWindow):
         self._toast(error)
         return False
 
+    # --- OpenCode continuation -------------------------------------------------
+
+    def show_opencode_status(self) -> None:
+        """Read-only OpenCode status plus suggested next actions.
+
+        The only commands this can run are git's own inspection commands, and
+        only for a project inside the allowlist; the result is text in the
+        response pane, never an action on the project.
+        """
+        if self._opencode_running:
+            self._toast("An OpenCode run is already in progress.")
+            return
+        project = self.settings.opencode_project
+        if not project:
+            self._set_text(
+                self.response_view,
+                "OpenCode continuation is off: no project is set.\n"
+                "Pick one in Preferences → OpenCode, together with the directories it may work in.",
+            )
+            self._set_status("OpenCode status: no project set.")
+            return
+        if not project_allowed(project, self.settings.opencode_allowed_dirs):
+            allowed = ", ".join(self.settings.opencode_allowed_dirs) or "(none)"
+            self._set_text(
+                self.response_view,
+                f"OpenCode: {project} is not inside an allowed directory.\n"
+                f"Allowed directories: {allowed}\n"
+                "Nothing was run.",
+            )
+            self._set_status("OpenCode status: project not allowed.")
+            self.opencode_audit.record("status-refused", detail=f"project={project}")
+            return
+
+        self._set_status("Checking OpenCode status…", busy=True)
+        self._opencode_status_generation += 1
+        generation = self._opencode_status_generation
+        transcript = self._get_text(self.transcript_view)
+        allowed_dirs = list(self.settings.opencode_allowed_dirs)
+
+        def worker() -> None:
+            status = read_only_status(project, allowed_dirs=allowed_dirs)
+            suggestions = suggested_next_actions(status, transcript)
+            idle(self._apply_opencode_status, status, suggestions, generation)
+
+        threading.Thread(target=worker, name="opencode-status", daemon=True).start()
+
+    def _apply_opencode_status(self, status, suggestions: list[str], generation: int) -> bool:
+        if generation != self._opencode_status_generation:
+            return False
+        lines = [f"Project: {status.project}"]
+        if status.error:
+            lines.append(f"Status: {status.error}")
+        else:
+            lines.append(f"Branch: {status.branch or '(no commits yet)'}")
+            if status.dirty:
+                lines.append(f"Changes: {len(status.changed_files)} uncommitted file(s)")
+            else:
+                lines.append("Changes: clean")
+            if status.recent_commits:
+                lines.append("Recent commits:")
+                lines.extend(f"  - {commit}" for commit in status.recent_commits)
+            if status.diffstat:
+                lines.append(f"Unstaged diff: {status.diffstat.splitlines()[-1]}")
+        lines.append("")
+        lines.append("Suggested next actions:")
+        lines.extend(f"  - {line}" for line in suggestions)
+        self._set_text(self.response_view, "\n".join(lines))
+        self._set_status("OpenCode status ready (read-only).")
+        self.opencode_audit.record("status", detail=f"project={status.project}")
+        return False
+
+    def continue_with_opencode(self, *, auto: bool = False) -> None:
+        """Run one supervised continuation of the project through the OpenCode CLI.
+
+        Gated twice: the feature must be enabled, and the project must sit
+        inside the allowlist. The automatic hook (``auto``) additionally needs
+        the auto-run switch. Either way the run is killable, time-bounded,
+        audited, checkpointed, and never auto-approves permissions.
+        """
+        if auto and not self.settings.opencode_auto_run:
+            return
+        if not self.settings.opencode_enabled:
+            if not auto:
+                self._toast("OpenCode continuation is off — turn it on in Preferences → OpenCode first.")
+                self._set_status("OpenCode continuation is off.")
+            return
+        if self._opencode_running:
+            if not auto:
+                self._toast("An OpenCode run is already in progress.")
+            return
+
+        project = self.settings.opencode_project
+        allowed_dirs = list(self.settings.opencode_allowed_dirs)
+        if not project or not project_allowed(project, allowed_dirs):
+            if not auto:
+                self._toast("The OpenCode project is not inside an allowed directory — nothing was run.")
+            self._set_status("OpenCode continuation refused: project not allowed.")
+            self.opencode_audit.record("run-refused", detail=f"project={project or '(unset)'}")
+            return
+
+        message = self._get_text(self.transcript_view)
+        if not message:
+            if not auto:
+                self._toast("Say or type the next step first.")
+            return
+
+        stop_event = threading.Event()
+        self.opencode_stop = stop_event
+        self._opencode_running = True
+        self._opencode_paused = False
+        self.opencode_button.set_sensitive(False)
+
+        plan = self.opencode_plan.load()
+        steps = plan.get("steps") or [message]
+        session = plan.get("session_id", "")
+        self.opencode_plan.save(project=project, steps=steps, session_id=session)
+
+        argv = continuation_argv(
+            message,
+            project=project,
+            model=self.settings.opencode_model,
+            session=session,
+        )
+        self.opencode_audit.record("run", argv=argv, detail=f"project={project}")
+        self._set_text(self.response_view, "")
+        self._set_status("OpenCode running…", busy=True)
+
+        def worker() -> None:
+            try:
+                result = run_continuation(
+                    argv,
+                    cwd=project,
+                    timeout=OPENCODE_RUN_TIMEOUT_SECONDS,
+                    stop_event=stop_event,
+                    allowed_dirs=allowed_dirs,
+                )
+            except OpenCodeError as exc:
+                idle(self._on_opencode_error, str(exc), message)
+                return
+            idle(self._on_opencode_finished, result, message)
+
+        threading.Thread(target=worker, name="opencode-continuation", daemon=True).start()
+
+    def _maybe_auto_continue(self) -> None:
+        """Automatic hook: it only ever calls the fully gated continuation."""
+        self.continue_with_opencode(auto=True)
+
+    def _on_opencode_finished(self, result, step: str) -> bool:
+        self._opencode_running = False
+        self.opencode_stop = None
+        self._opencode_paused = False
+        self.opencode_button.set_sensitive(True)
+
+        if result.stopped:
+            outcome = "stopped"
+            self._set_status("OpenCode paused.")
+            self._toast("Paused — nothing runs again until you press OpenCode.")
+        elif result.timed_out:
+            outcome = "timed-out"
+            self._set_status("OpenCode run timed out.")
+        elif result.returncode != 0:
+            outcome = "failed"
+            self._set_status("OpenCode run failed.")
+        else:
+            outcome = "finished"
+            self._set_status("OpenCode run complete.")
+
+        body = parse_reply_text(result.stdout)
+        if result.stderr:
+            body = f"{body}\n{result.stderr}".strip() if body else result.stderr
+        self._set_text(self.response_view, body or "(OpenCode produced no output)")
+
+        self.opencode_plan.checkpoint(
+            project=self.settings.opencode_project,
+            step=step,
+            session_id=result.session_id,
+            status=outcome,
+        )
+        self.opencode_audit.record(
+            outcome,
+            detail=f"exit={result.returncode} session={result.session_id or '(none)'}",
+        )
+        return False
+
+    def _on_opencode_error(self, error: str, step: str) -> bool:
+        self._opencode_running = False
+        self.opencode_stop = None
+        self.opencode_button.set_sensitive(True)
+        self._toast(error)
+        self._set_text(self.response_view, f"OpenCode did not run.\n{error}")
+        self._set_status("OpenCode continuation failed.")
+        self.opencode_plan.checkpoint(
+            project=self.settings.opencode_project, step=step, status="error"
+        )
+        self.opencode_audit.record("error", detail=error[:120])
+        return False
+
     def stop_current_work(self) -> None:
         if self.listening:
             self.stop_recording()
@@ -1352,11 +1588,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.stop_conversation_mode()
         if self._installing:
             self._install_cancel.set()
+        # Pause also kills the supervised OpenCode run: the child process is
+        # terminated, and the status line says "Paused" rather than pretending
+        # the work finished.
+        if self._opencode_running and self.opencode_stop is not None:
+            self.opencode_stop.set()
+            self._opencode_paused = True
         self.query_cancel.set()
         self._query_generation += 1
         self.speech.stop()
         self.ask_button.set_sensitive(True)
-        self._set_status("Stopped.")
+        self._set_status("Paused." if self._opencode_paused else "Stopped.")
 
     @staticmethod
     def _gtk_theme_prefers_dark() -> bool:
@@ -1482,6 +1724,51 @@ class MainWindow(Adw.ApplicationWindow):
         ai_group.add(manage_row)
         dialog.add(ai_page)
 
+        opencode_page = Adw.PreferencesPage(title="OpenCode", icon_name="system-run-symbolic")
+        opencode_page.set_description(
+            "Hand one supervised step of a project to the OpenCode CLI. Off by default."
+        )
+        opencode_group = Adw.PreferencesGroup(
+            description=(
+                "Runs stay inside the directories you allow, are written to an audit log, "
+                "can be paused at any time, and never auto-approve permissions."
+            ),
+        )
+        opencode_page.add(opencode_group)
+
+        enabled_row = Adw.SwitchRow(
+            title="Continue projects with OpenCode",
+            subtitle="Off means no OpenCode run can start",
+        )
+        enabled_row.set_active(self.settings.opencode_enabled)
+        opencode_group.add(enabled_row)
+
+        auto_row = Adw.SwitchRow(
+            title="Continue automatically when a transcript finishes",
+            subtitle="Needs the switch above too, and still only inside the allowed directories",
+        )
+        auto_row.set_active(self.settings.opencode_auto_run)
+        opencode_group.add(auto_row)
+
+        project_row = Adw.EntryRow(title="Project to continue")
+        project_row.set_text(self.settings.opencode_project)
+        opencode_group.add(project_row)
+
+        dirs_row = Adw.EntryRow(
+            title="Allowed project directories",
+            subtitle="Separated by ':' — an empty list means nothing may be touched",
+        )
+        dirs_row.set_text(os.pathsep.join(self.settings.opencode_allowed_dirs))
+        opencode_group.add(dirs_row)
+
+        model_row = Adw.EntryRow(
+            title="OpenCode model",
+            subtitle="provider/model as the CLI names it — blank uses its default",
+        )
+        model_row.set_text(self.settings.opencode_model)
+        opencode_group.add(model_row)
+        dialog.add(opencode_page)
+
         conversation_page = Adw.PreferencesPage(title="Conversation mode", icon_name="microphone-sensitivity-muted-symbolic")
         conversation_page.set_description("Hands-free exchanges: say the wake word, then your question.")
         conversation_group = Adw.PreferencesGroup(
@@ -1525,6 +1812,11 @@ class MainWindow(Adw.ApplicationWindow):
             wake_word_row,
             voice_row,
             rate_row,
+            enabled_row,
+            auto_row,
+            project_row,
+            dirs_row,
+            model_row,
         )
         dialog.present(self)
 
@@ -1540,6 +1832,11 @@ class MainWindow(Adw.ApplicationWindow):
         wake_word_row,
         voice_row,
         rate_row,
+        enabled_row,
+        auto_row,
+        project_row,
+        dirs_row,
+        model_row,
     ) -> None:
         new_whisper = WHISPER_MODELS[whisper_row.get_selected()]
         if self.devices:
@@ -1554,8 +1851,16 @@ class MainWindow(Adw.ApplicationWindow):
         self.settings.appearance = APPEARANCE_VALUES[appearance_row.get_selected()]
         self.settings.tts_voice = TTS_VOICES[voice_row.get_selected()][1]
         self.settings.tts_rate = int(rate_row.get_value())
+        self.settings.opencode_enabled = enabled_row.get_active()
+        self.settings.opencode_auto_run = auto_row.get_active()
+        self.settings.opencode_project = project_row.get_text().strip()
+        self.settings.opencode_allowed_dirs = [
+            part.strip() for part in dirs_row.get_text().split(os.pathsep) if part.strip()
+        ]
+        self.settings.opencode_model = model_row.get_text().strip()
         self.config_store.save(self.settings)
         self._apply_appearance()
+        self.opencode_button.set_sensitive(self.settings.opencode_enabled)
         if new_whisper != self.settings.whisper_model:
             self._load_whisper(new_whisper)
         self._refresh_ollama_models()

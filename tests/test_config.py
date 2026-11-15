@@ -45,3 +45,34 @@ def test_wake_word_falls_back_to_default_when_blank(tmp_path: Path) -> None:
     store.save(Settings(wake_word="   "))
 
     assert store.load().wake_word == "computer"
+
+
+def test_opencode_settings_default_to_off(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    loaded = store.load()
+
+    assert loaded.opencode_enabled is False
+    assert loaded.opencode_auto_run is False
+    assert loaded.opencode_project == ""
+    assert loaded.opencode_allowed_dirs == []
+    assert loaded.opencode_model == ""
+
+
+def test_opencode_settings_round_trip_and_normalise(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    store.save(
+        Settings(
+            opencode_enabled=True,
+            opencode_auto_run=True,
+            opencode_project="  /home/user/project  ",
+            opencode_allowed_dirs=[" /home/user ", "", " /home/user ", "/opt/projects"],
+            opencode_model=" anthropic/claude-4.5 ",
+        )
+    )
+    loaded = store.load()
+
+    assert loaded.opencode_enabled is True
+    assert loaded.opencode_auto_run is True
+    assert loaded.opencode_project == "/home/user/project"
+    assert loaded.opencode_allowed_dirs == ["/home/user", "/opt/projects"]
+    assert loaded.opencode_model == "anthropic/claude-4.5"
