@@ -106,16 +106,53 @@ class AudioCapture:
             return properties.to_string()
         return fallback
 
-    def start(self, device_id: str, on_audio, on_level, on_error) -> None:
+    def resolve_device(self, device_id: str, device_name: str = "") -> AudioDevice | None:
+        """Return the device a saved microphone choice points at, or None.
+
+        Identifiers drift between launches: `_device_identifier` falls back to a
+        dump of every property when a device exposes no stable field, so a saved
+        id can miss on the next session even though the same microphone is
+        present. Matching the saved display name as well, and re-scanning once
+        when the cache is stale, is what keeps the user's choice from quietly
+        turning into the sound server's default source.
+        """
+        if not device_id and not device_name:
+            return None
+        match = self._match_choice(device_id, device_name, self._devices)
+        if match is not None:
+            return match
+        # One re-scan covers a microphone that appeared, changed index or was
+        # renamed after the cache was built; list_devices refreshes self._devices.
+        return self._match_choice(device_id, device_name, self.list_devices())
+
+    @staticmethod
+    def _match_choice(device_id: str, device_name: str, devices: list[AudioDevice]) -> AudioDevice | None:
+        if device_id:
+            for device in devices:
+                if device.identifier == device_id:
+                    return device
+        if device_name:
+            wanted = device_name.casefold()
+            for device in devices:
+                if device.name.casefold() == wanted:
+                    return device
+        return None
+
+    def start(self, device_id: str, on_audio, on_level, on_error, *, device_name: str = "") -> None:
         self.stop()
         self._on_audio = on_audio
         self._on_error = on_error
 
-        selected = next((item for item in self._devices if item.identifier == device_id), None)
+        selected = self.resolve_device(device_id, device_name)
         # A profile saved by an older build could still point at a monitor
         # node; refuse to open it rather than capture the machine's own audio.
         if selected is not None and is_monitor_source(selected.properties, selected.name):
             raise RuntimeError("The selected source is a monitor stream and cannot capture your voice.")
+        if selected is None and (device_id or device_name):
+            # Never fall back to autoaudiosrc here: on a PipeWire desktop that
+            # is usually the monitor of the default sink, i.e. the machine's
+            # own audio. Say what happened instead, before any pipeline exists.
+            raise RuntimeError("The microphone you chose is no longer on this machine. Pick one from the list.")
         gst = _ensure_gstreamer()
         if selected is not None:
             source = selected.device.create_element(None)

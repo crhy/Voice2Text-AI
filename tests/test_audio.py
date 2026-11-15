@@ -108,3 +108,36 @@ def test_start_refuses_a_stale_monitor_selection() -> None:
     else:
         raise AssertionError("opening a monitor source must fail")
     assert capture.pipeline is None
+
+
+def test_a_stale_choice_no_longer_falls_back_to_autoaudiosrc(monkeypatch) -> None:
+    """The old code reached for autoaudiosrc whenever a saved identifier missed,
+    which on a PipeWire desktop means capturing the machine's own audio. A stale
+    choice must now fail before GStreamer is even imported."""
+    def forbidden() -> None:
+        raise AssertionError("GStreamer must not be reached for a stale choice")
+
+    monkeypatch.setattr("voice2text.audio._ensure_gstreamer", forbidden)
+    capture = AudioCapture()
+    capture._devices = [
+        AudioDevice(
+            identifier="node.name:Headset Microphone",
+            name="Headset Microphone",
+            device=None,
+            properties=pipewire_mics()["headset"],
+        )
+    ]
+    capture.list_devices = lambda: capture._devices
+    try:
+        capture.start(
+            "fakeGstStructure(display-name='Desk Microphone')",
+            lambda *_: None,
+            None,
+            lambda _e: None,
+            device_name="Desk Microphone",
+        )
+    except RuntimeError as exc:
+        assert "no longer on this machine" in str(exc)
+    else:
+        raise AssertionError("a missing microphone must not open a default source")
+    assert capture.pipeline is None

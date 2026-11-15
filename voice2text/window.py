@@ -389,7 +389,16 @@ class MainWindow(Adw.ApplicationWindow):
                         None,
                     )
                 if selected is None:
-                    selected = self.devices[0]
+                    # Only ever fall back to the first device when nothing was
+                    # ever chosen. A saved choice that matches nothing is most
+                    # likely a microphone that is away, not a stale profile:
+                    # overwriting it would silently send capture somewhere else
+                    # (and on a PipeWire desktop, nowhere good).
+                    if not self.settings.microphone_id and not self.settings.microphone_name:
+                        selected = self.devices[0]
+                    else:
+                        self._toast("Your chosen microphone is not available. Pick one from the list.")
+                        return
                 if (
                     self.settings.microphone_id != selected.identifier
                     or self.settings.microphone_name != selected.name
@@ -842,6 +851,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.dictation.feed,
                 self._queue_level,
                 lambda error: idle(self._capture_error, error),
+                device_name=self.settings.microphone_name,
             )
         except Exception as exc:  # noqa: BLE001 - platform boundary
             self.dictation.stop()
@@ -925,6 +935,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.conversation.feed,
                 self._queue_level,
                 lambda error: idle(self._conversation_capture_error, error),
+                device_name=self.settings.microphone_name,
             )
         except Exception as exc:  # noqa: BLE001 - platform boundary
             self.conversation.stop()
