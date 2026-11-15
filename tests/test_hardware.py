@@ -7,6 +7,8 @@ from unittest.mock import patch
 import voice2text.hardware as hardware
 from voice2text.hardware import (
     _nvidia_smi_command,
+    context_tokens,
+    hardware_limit,
     detect_gpu_vram_gb,
     detect_system_ram_gb,
     sample_gpu_usage,
@@ -107,3 +109,21 @@ def test_sample_gpu_usage_returns_none_on_malformed_output() -> None:
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="not,a,number\n", stderr="")
     with patch("subprocess.run", return_value=fake):
         assert sample_gpu_usage() is None
+
+
+def test_context_tokens_walks_the_ladder_down_to_the_smallest_rung() -> None:
+    # The same memory figure suggest_models sizes against: as the weights eat
+    # the machine, the context the app asks for walks down the ladder instead
+    # of leaving Ollama to pay for its own default context.
+    ladder = [context_tokens(24.0, weights) for weights in (0.0, 20.0, 21.0, 22.5, 23.5, 23.75)]
+    assert ladder == [8192, 8192, 4096, 2048, 1024, 512]
+
+
+def test_hardware_limit_uses_the_same_headroom_rule_as_suggestions() -> None:
+    # qwen2.5:7b needs 4.7 * 1.3 + 1 = 7.1 GB: fine at 8 GB, over the line at 7.
+    assert hardware_limit(8.0, "GPU VRAM", "qwen2.5:7b", 4.7) is None
+    message = hardware_limit(7.0, "GPU VRAM", "qwen2.5:7b", 4.7)
+    assert message is not None
+    assert "qwen2.5:7b" in message and "7.0 GB" in message and "GPU VRAM" in message
+    # With no suggestions the catalog's smallest model is the one to name.
+    assert "qwen2.5:0.5b" in message

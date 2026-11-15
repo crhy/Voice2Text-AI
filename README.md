@@ -113,6 +113,16 @@ flatpak-builder --user --install --force-clean build-dir io.github.crhy.voice2te
 Settings are stored in `$XDG_CONFIG_HOME/voice2text-ai/config.json` and edited
 from the Preferences dialog.
 
+Ask AI also sizes itself to your machine without a setting: it keeps the selected
+Ollama model loaded between questions instead of letting the server unload and
+reload the weights, and asks for the largest context (512–8192 tokens) whose
+key/value cache fits the memory left after that model's weights — the same GPU
+VRAM or system RAM figure the model suggestions use. If the model you picked is
+bigger than the machine, the app says so before the request starts: the model's
+size, your machine's memory and where that figure came from, and the smallest
+suggested model to switch to. It states that limit rather than quoting a speed
+it has not measured on your hardware.
+
 Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).

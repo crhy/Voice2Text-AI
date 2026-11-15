@@ -127,6 +127,23 @@ def test_generate_stream_uses_chat_endpoint_when_messages_are_given() -> None:
     assert "prompt" not in body
 
 
+def test_generate_stream_omits_num_ctx_when_the_caller_did_not_size_it() -> None:
+    response = FakeResponse(b'{"response":"Hi","done":true}\n')
+    with patch("urllib.request.urlopen", return_value=response) as mocked:
+        OllamaClient().generate_stream(
+            model="test",
+            prompt="hello",
+            cancel_event=threading.Event(),
+            on_chunk=lambda _chunk: None,
+        )
+    body = json.loads(mocked.call_args[0][0].data)
+    # Warm retention is the default, but an unsized request must still fall
+    # back to the server's own context rather than a number invented here.
+    assert body["options"]["keep_alive"] == 300.0
+    assert "num_ctx" not in body["options"]
+    assert "num_ctx" not in body
+
+
 def test_strip_reasoning_removes_a_matched_think_block():
     assert strip_reasoning("<think>weighing it up</think>\n\nGNOME.") == "GNOME."
 

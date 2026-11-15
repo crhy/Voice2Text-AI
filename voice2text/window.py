@@ -16,7 +16,15 @@ from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refres
 from .config import ConfigStore  # noqa: E402
 from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
-from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
+from .hardware import (  # noqa: E402
+    GpuUsage,
+    MODEL_CATALOG,
+    context_tokens,
+    detect_available_model_memory_gb,
+    hardware_limit,
+    sample_gpu_usage,
+    suggest_models,
+)
 from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
 from .speech import SpeechService  # noqa: E402
@@ -130,6 +138,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._has_gpu = False
         self._gpu_poll_stop: threading.Event | None = None
         self._model_combo_updating = False
+        # Memory figure and source once hardware detection reports them (None
+        # until then, so nothing is sized against a guess), plus the per-model
+        # weight sizes Ollama reports, used to size the context in ask_ai.
+        self._available_gb: float | None = None
+        self._memory_source = ""
+        self._model_sizes: dict[str, int] = {}
 
         self._build_ui()
         self._install_actions()
@@ -403,11 +417,18 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_ollama_models(self) -> None:
         def worker() -> None:
             try:
-                models = OllamaClient(self.settings.ollama_url).list_models()
-                idle(self._apply_ollama_models, models)
+                infos = OllamaClient(self.settings.ollama_url).list_models_detailed()
             except OllamaError as exc:
                 idle(self._set_status, "Ollama is offline. Dictation is still available.")
                 idle(self._toast, str(exc))
+                return
+            # Sizes travel with the names so ask_ai can size the context to the
+            # model actually selected; the combo box still only needs names.
+            idle(
+                self._apply_ollama_models,
+                [info.name for info in infos],
+                {info.name: info.size_bytes for info in infos},
+            )
 
         threading.Thread(target=worker, name="ollama-models", daemon=True).start()
 
@@ -441,6 +462,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _apply_hardware_summary(self, available_gb: float, source: str, suggestions: list) -> bool:
         self._suggested_models = [model.name for model in suggestions]
+        self._available_gb = available_gb
+        self._memory_source = source
         names = ", ".join(self._suggested_models)
         self._hardware_summary = f"Suggested for this machine (~{available_gb:.0f} GB {source}): {names}"
         self._has_gpu = source == "GPU VRAM"
@@ -488,8 +511,16 @@ class MainWindow(Adw.ApplicationWindow):
         )
         return False
 
-    def _apply_ollama_models(self, models: list[str]) -> bool:
+    def _apply_ollama_models(self, models: list[str], sizes: dict[str, int] | None = None) -> bool:
         self.ollama_models = models
+        if sizes is not None:
+            self._model_sizes = sizes
+        else:
+            # Pull and delete refresh the names only: keep the sizes already
+            # measured and forget any model that is no longer on disk.
+            self._model_sizes = {
+                name: size for name, size in self._model_sizes.items() if name in models
+            }
         if models and self.settings.ollama_model not in models:
             self.settings.ollama_model = models[0]
             self.config_store.save(self.settings)
@@ -1182,6 +1213,20 @@ class MainWindow(Adw.ApplicationWindow):
         self._set_text(self.response_view, "")
         self._set_status("Ready")
 
+    def _model_size_gb(self, model: str) -> float:
+        # Weight size of the selected model: Ollama's own figure when it is
+        # reachable, the catalog's estimate when it is not. An unknown model
+        # sizes as 0.0, which only ever makes the context more generous, never
+        # tighter, and hardware_limit then stays silent rather than guessing.
+        size_bytes = self._model_sizes.get(model)
+        if size_bytes:
+            return size_bytes / 1024**3
+        wanted = model.casefold()
+        for entry in MODEL_CATALOG:
+            if entry.name.casefold() == wanted:
+                return entry.approx_gb
+        return 0.0
+
     def ask_ai(self, prompt: str | None = None) -> None:
         self._stop_dictation_for_action()
         if prompt is None:
@@ -1222,9 +1267,29 @@ class MainWindow(Adw.ApplicationWindow):
 
         model = self.settings.ollama_model
         endpoint = self.settings.ollama_url
+        # Size the context to the machine instead of accepting Ollama's own
+        # default, and state the hardware limit before the request starts rather
+        # than after it crawls. Nothing is sized until detection reports a real
+        # memory figure, and no latency figure is claimed: none was measured.
+        model_gb = self._model_size_gb(model)
+        num_ctx: int | None = None
+        limit: str | None = None
+        if self._available_gb is not None:
+            num_ctx = context_tokens(self._available_gb, model_gb)
+            limit = hardware_limit(
+                self._available_gb,
+                self._memory_source,
+                model,
+                model_gb,
+                self._suggested_models,
+            )
         self._set_text(self.response_view, "")
         self.ask_button.set_sensitive(False)
-        self._set_status(f"Asking {model}…", busy=True)
+        status = f"Asking {model}…"
+        if limit is not None:
+            self._toast(limit)
+            status = f"{status} {limit}"
+        self._set_status(status, busy=True)
         self._start_gpu_monitor()
 
         # Batch streamed chunks so the main loop schedules at most one idle
@@ -1251,6 +1316,8 @@ class MainWindow(Adw.ApplicationWindow):
                     cancel_event=cancel_event,
                     on_chunk=on_chunk,
                     messages=messages,
+                    num_ctx=num_ctx,
+                    keep_alive_seconds=300.0,
                 )
                 flush_chunks()
                 idle(self._on_query_finished, answer, generation, cancel_event)

@@ -73,6 +73,8 @@ class OllamaClient:
         on_chunk: Callable[[str], None],
         num_predict: int = 768,
         messages: list[dict] | None = None,
+        keep_alive_seconds: float = 300.0,
+        num_ctx: int | None = None,
     ) -> str:
         if not model:
             raise OllamaError("No Ollama model is selected.")
@@ -83,10 +85,17 @@ class OllamaClient:
         # the earlier turns of a conversation; without one the plain
         # generate endpoint stays the cheap single-shot path.
         chat = messages is not None
+        options: dict = {"num_predict": num_predict, "keep_alive": keep_alive_seconds}
+        if num_ctx is not None:
+            options["num_ctx"] = num_ctx
         body: dict = {
             "model": model,
             "stream": True,
-            "options": {"num_predict": num_predict},
+            # keep_alive holds the weights in memory between turns: on an
+            # underpowered machine unloading and reloading them is most of the
+            # wait before the first token. num_ctx is sent only when the caller
+            # sized it, so an unsized request still gets the server's own default.
+            "options": options,
         }
         if chat:
             body["messages"] = messages

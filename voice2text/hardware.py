@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,9 +50,74 @@ CURATED_PREFERENCE_BAND = 0.10
 _HEADROOM_FACTOR = 1.3
 _HEADROOM_FLOOR_GB = 1.0
 
+# Planning figure for the KV cache: half a megabyte per token of context for
+# the quantized models in MODEL_CATALOG. This is deliberately a constant chosen
+# to plan against, not a measurement of any model on any machine — nothing here
+# has been profiled, and the number is only used to pick a context size that is
+# unlikely to be the thing that pushes an underpowered machine into swapping.
+KV_CACHE_MB_PER_TOKEN = 0.5
+
+# The context sizes the app will ask for, smallest first. Ollama's own default
+# is paid for whether or not the machine has room for it, so the app picks the
+# largest rung that fits instead of accepting the server default.
+CONTEXT_RUNGS = (512, 1024, 2048, 4096, 8192)
+
+
+def _fits_size(available_gb: float, approx_gb: float) -> bool:
+    return available_gb >= approx_gb * _HEADROOM_FACTOR + _HEADROOM_FLOOR_GB
+
 
 def _fits(available_gb: float, model: ModelSuggestion) -> bool:
-    return available_gb >= model.approx_gb * _HEADROOM_FACTOR + _HEADROOM_FLOOR_GB
+    return _fits_size(available_gb, model.approx_gb)
+
+
+def _cache_gb(tokens: int) -> float:
+    return tokens * KV_CACHE_MB_PER_TOKEN / 1024
+
+
+def context_tokens(available_gb: float, model_gb: float = 0.0) -> int:
+    """Largest context from ``CONTEXT_RUNGS`` whose KV cache fits the machine.
+
+    ``available_gb`` is the figure ``detect_available_model_memory_gb`` reports
+    (GPU VRAM, or system RAM when there is no GPU); the model's weights are
+    subtracted first and the remaining room has to hold the cache. When the
+    weights leave no room for even the smallest rung the smallest rung is still
+    returned — Ollama has no zero-token context to ask for, and ``hardware_limit``
+    is what tells the user the machine is too small for the model.
+    """
+    room_gb = available_gb - model_gb
+    for rung in reversed(CONTEXT_RUNGS):
+        if _cache_gb(rung) <= room_gb:
+            return rung
+    return CONTEXT_RUNGS[0]
+
+
+def hardware_limit(
+    available_gb: float,
+    source: str,
+    model_name: str,
+    model_gb: float,
+    suggestions: Sequence[str] = (),
+) -> str | None:
+    """One honest sentence when the chosen model is bigger than the machine.
+
+    Returns ``None`` when the model fits under the same headroom rule
+    ``suggest_models`` uses, so the app only speaks when there is a real limit
+    to state. The sentence names the model's size, the machine's memory and
+    where that figure came from, and the smallest of the machine's suggestions
+    to switch to (``suggest_models`` returns them largest-first, so the last
+    one is the safest switch; with no suggestions at all the catalog's smallest
+    model is named instead). No latency figure is claimed, because none was
+    measured here.
+    """
+    if _fits_size(available_gb, model_gb):
+        return None
+    smallest = suggestions[-1] if suggestions else MODEL_CATALOG[0].name
+    return (
+        f"{model_name} needs about {model_gb:.1f} GB, this machine has "
+        f"{available_gb:.1f} GB ({source}), so it will crawl or fail — "
+        f"switch to {smallest} or smaller for conversational speed."
+    )
 
 
 def suggest_models(
