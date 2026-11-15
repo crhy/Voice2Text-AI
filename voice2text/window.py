@@ -18,7 +18,8 @@ from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
-from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
+from .ollama import GenerationStats, OllamaClient, OllamaError, strip_reasoning  # noqa: E402
+from .diagnostics import speed_sentence  # noqa: E402
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
 
@@ -1242,6 +1243,11 @@ class MainWindow(Adw.ApplicationWindow):
             if len(pending_chunks) >= 8:
                 flush_chunks()
 
+        # The server reports its own token count and durations on the last
+        # stream event; keep them so a finished answer can say how fast it
+        # was written instead of staying silent about speed.
+        stats_seen: list[GenerationStats] = []
+
         def worker() -> None:
             try:
                 client = OllamaClient(endpoint)
@@ -1251,9 +1257,16 @@ class MainWindow(Adw.ApplicationWindow):
                     cancel_event=cancel_event,
                     on_chunk=on_chunk,
                     messages=messages,
+                    on_stats=stats_seen.append,
                 )
                 flush_chunks()
-                idle(self._on_query_finished, answer, generation, cancel_event)
+                idle(
+                    self._on_query_finished,
+                    answer,
+                    generation,
+                    cancel_event,
+                    speed_sentence(stats_seen[-1] if stats_seen else None),
+                )
             except OllamaError as exc:
                 flush_chunks()
                 idle(self._on_query_error, str(exc), generation, cancel_event)
@@ -1272,7 +1285,11 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_query_finished(
-        self, answer: str, generation: int, cancel_event: threading.Event
+        self,
+        answer: str,
+        generation: int,
+        cancel_event: threading.Event,
+        speed: str = "",
     ) -> bool:
         if not self._query_is_current(generation, cancel_event):
             return False
@@ -1290,7 +1307,7 @@ class MainWindow(Adw.ApplicationWindow):
         if cancel_event.is_set():
             self._set_status("AI request stopped.")
             return False
-        self._set_status("AI response complete.")
+        self._set_status(f"AI response complete — {speed}" if speed else "AI response complete.")
         # A thinking model streams its scratchpad in with the reply. Replace
         # what was streamed with just the answer, so the chain of thought is
         # neither left on screen nor read aloud in conversation mode.

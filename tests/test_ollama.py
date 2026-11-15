@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from voice2text.ollama import OllamaClient, OllamaError, strip_reasoning
+from voice2text.ollama import GenerationStats, OllamaClient, OllamaError, strip_reasoning
 
 
 class FakeResponse(io.BytesIO):
@@ -125,6 +125,36 @@ def test_generate_stream_uses_chat_endpoint_when_messages_are_given() -> None:
     assert body["stream"] is True
     assert body["messages"] == history
     assert "prompt" not in body
+
+
+def test_generate_stream_reports_the_servers_own_speed_numbers() -> None:
+    response = FakeResponse(
+        b'{"response":"Hello","done":false}\n'
+        b'{"response":" world","done":false}\n'
+        b'{"done":true,"eval_count":128,"eval_duration":6400000000,'
+        b'"prompt_eval_count":7,"prompt_eval_duration":412000000,"total_duration":7100000000}\n'
+    )
+    seen: list[GenerationStats] = []
+    chunks: list[str] = []
+    with patch("urllib.request.urlopen", return_value=response):
+        answer = OllamaClient().generate_stream(
+            model="test",
+            prompt="hello",
+            cancel_event=threading.Event(),
+            on_chunk=chunks.append,
+            on_stats=seen.append,
+        )
+    assert answer == "Hello world"
+    assert chunks == ["Hello", " world"]
+    assert seen == [
+        GenerationStats(
+            eval_count=128,
+            eval_duration_ns=6_400_000_000,
+            prompt_eval_count=7,
+            prompt_eval_duration_ns=412_000_000,
+            total_duration_ns=7_100_000_000,
+        )
+    ]
 
 
 def test_strip_reasoning_removes_a_matched_think_block():

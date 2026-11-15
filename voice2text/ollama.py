@@ -37,6 +37,51 @@ class ModelInfo:
     size_bytes: int
 
 
+@dataclass(slots=True, frozen=True)
+class GenerationStats:
+    """What the server itself said about one answer, in its own units.
+
+    Ollama reports these on the final ``done`` event of a stream: token counts
+    and durations in nanoseconds. Nothing here is estimated by the app, so a
+    missing figure stays missing rather than becoming a plausible guess.
+    """
+
+    eval_count: int
+    eval_duration_ns: int
+    prompt_eval_count: int
+    prompt_eval_duration_ns: int
+    total_duration_ns: int
+
+
+_STATS_KEYS = (
+    "eval_count",
+    "eval_duration",
+    "prompt_eval_count",
+    "prompt_eval_duration",
+    "total_duration",
+)
+
+
+def _stats_from_event(event: dict) -> GenerationStats | None:
+    """Parse the timing block of a ``done`` event, or None when it sent none."""
+    if not any(key in event for key in _STATS_KEYS):
+        return None
+
+    def _count_or_duration(key: str) -> int:
+        try:
+            return max(int(event.get(key, 0) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return GenerationStats(
+        eval_count=_count_or_duration("eval_count"),
+        eval_duration_ns=_count_or_duration("eval_duration"),
+        prompt_eval_count=_count_or_duration("prompt_eval_count"),
+        prompt_eval_duration_ns=_count_or_duration("prompt_eval_duration"),
+        total_duration_ns=_count_or_duration("total_duration"),
+    )
+
+
 class OllamaClient:
     def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 5.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -73,6 +118,7 @@ class OllamaClient:
         on_chunk: Callable[[str], None],
         num_predict: int = 768,
         messages: list[dict] | None = None,
+        on_stats: Callable[[GenerationStats], None] | None = None,
     ) -> str:
         if not model:
             raise OllamaError("No Ollama model is selected.")
@@ -144,6 +190,12 @@ class OllamaClient:
                         chunks.append(text)
                         on_chunk(text)
                     if event.get("done"):
+                        # The server's own speed numbers ride on this last event;
+                        # report them once and keep the return value unchanged.
+                        if on_stats is not None:
+                            stats = _stats_from_event(event)
+                            if stats is not None:
+                                on_stats(stats)
                         break
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:300]
