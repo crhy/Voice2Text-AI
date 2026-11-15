@@ -1,8 +1,8 @@
 """Backup and restore for Voice2Text AI settings and local LLM configuration.
 
 Implements issue #26: an encrypted, integrity-checked backup of Ollama
-models/selections, the Ollama configuration, Voice2Text settings, and
-OpenCode configuration.
+models/selections, the Ollama configuration, Voice2Text settings, and the
+pi agent directory (``~/.pi/agent``, or ``PI_CODING_AGENT_DIR``).
 
 Design notes
 ------------
@@ -91,7 +91,9 @@ SECRET_VALUE_PREFIXES = (
     "xoxp-",
 )
 
-OPENCODE_SKIP_DIRS = {
+# Directories inside the pi agent directory that hold dependencies, caches,
+# conversation history or VCS noise rather than portable configuration.
+PI_SKIP_DIRS = {
     "node_modules",
     "pnpm-store",
     "bun",
@@ -99,8 +101,28 @@ OPENCODE_SKIP_DIRS = {
     ".vercel",
     "logs",
     "cache",
+    "sessions",
 }
-OPENCODE_SKIP_SUFFIXES = {".log", ".db", ".sqlite", ".sqlite3", ".lock"}
+PI_SKIP_SUFFIXES = {".log", ".db", ".sqlite", ".sqlite3", ".lock", ".bak", ".jsonl", ".tmp", ".old"}
+
+# pi files that are never portable: credentials and the local model store.
+PI_NEVER_STORE_FILES = {"auth.json", "mcp-auth.json", "models-store.json"}
+# Name fragments that mark hand-made copies and scratch files people leave behind
+# (``settings.json.bak-autocompact``, ``models.json.backup-20261114-122137``, …).
+PI_COPY_MARKERS = (".bak", ".backup", ".old", ".tmp")
+
+# pi's own documented agent-directory contents (see pi docs/configuration.md).
+PI_CONFIG_FILES = {"settings.json", "keybindings.json", "mcp.json", "models.json"}
+PI_INSTRUCTION_FILES = {
+    "AGENTS.override.md",
+    "AGENTS.md",
+    "AGENTS.MD",
+    "CLAUDE.md",
+    "CLAUDE.MD",
+    "SYSTEM.md",
+    "APPEND_SYSTEM.md",
+}
+PI_RESOURCE_DIRS = {"extensions", "skills", "prompts", "themes"}
 
 GPG_PATH = shutil.which("gpg")
 GPG2_PATH = shutil.which("gpg2")
@@ -302,7 +324,7 @@ class BackupPaths:
     ollama_models: Path | None = None
     ollama_config: Path | None = None
     v2t_config: Path | None = None
-    opencode_dir: Path | None = None
+    pi_agent_dir: Path | None = None
 
     def __post_init__(self) -> None:
         if self.ollama_models is None:
@@ -311,8 +333,11 @@ class BackupPaths:
             self.ollama_config = self.home / ".ollama" / "config.json"
         if self.v2t_config is None:
             self.v2t_config = self.home / ".config" / "voice2text-ai" / "config.json"
-        if self.opencode_dir is None:
-            self.opencode_dir = self.home / ".config" / "opencode"
+        if self.pi_agent_dir is None:
+            env_dir = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+            self.pi_agent_dir = (
+                Path(env_dir).expanduser() if env_dir else self.home / ".pi" / "agent"
+            )
 
 
 @dataclass
@@ -432,23 +457,43 @@ def _ollama_display_name(registry: str, relative: Path) -> str:
     return "/".join(parts[:-1]) + ":" + parts[-1] if len(parts) > 1 else parts[0]
 
 
-def _opencode_config_files(paths: BackupPaths) -> list[Path]:
+def _is_hand_made_copy(name: str) -> bool:
+    """True for hand-made copies and scratch files (``x.json.bak-2026…`` etc.)."""
+    lowered = name.lower()
+    return any(marker in lowered for marker in PI_COPY_MARKERS)
+
+
+def _pi_agent_config_files(paths: BackupPaths) -> list[Path]:
+    """Portable configuration inside the pi agent directory.
+
+    Only pi's documented config, instruction and resource files are kept. Credentials
+    (``auth.json``, ``mcp-auth.json``), the local model store, and everything under
+    ``sessions/`` (conversation history) are never stored, per issue #26's rule that
+    tokens, credentials and conversation history are excluded by default. An absent
+    agent directory is silent, not a warning.
+    """
     found: list[Path] = []
-    root = paths.opencode_dir
+    root = paths.pi_agent_dir
     if root is None or not root.is_dir():
         return found
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        parts = path.relative_to(root).parts
-        if any(part in OPENCODE_SKIP_DIRS for part in parts[:-1]):
+        relative = path.relative_to(root)
+        parts = relative.parts
+        if any(part in ("", ".", "..") for part in parts) or ":" in relative.as_posix():
+            continue  # never let a member name escape .pi/agent/
+        if any(part in PI_SKIP_DIRS for part in parts):
             continue
         name = path.name
-        if path.suffix.lower() in OPENCODE_SKIP_SUFFIXES:
+        if name.lower() in PI_NEVER_STORE_FILES or _is_hand_made_copy(name):
             continue
-        if name.startswith("opencode") and name.lower().endswith((".json", ".jsonc")):
-            found.append(path)
-        elif name == "auth.json":
+        if path.suffix.lower() in PI_SKIP_SUFFIXES:
+            continue
+        if len(parts) == 1:
+            if name in PI_CONFIG_FILES or name in PI_INSTRUCTION_FILES:
+                found.append(path)
+        elif parts[0] in PI_RESOURCE_DIRS:
             found.append(path)
     return found
 
@@ -474,9 +519,10 @@ def build_inventory(
             config_files.append((label, path))
         elif path is not None and not path.exists():
             warnings.append(f"missing: {path}")
-    for path in _opencode_config_files(paths):
-        rel = path.name
-        config_files.append((f"opencode:{rel}", path))
+    pi_root = paths.pi_agent_dir
+    for path in _pi_agent_config_files(paths):
+        rel = path.relative_to(pi_root).as_posix() if pi_root is not None else path.name
+        config_files.append((f"pi:{rel}", path))
 
     for label, path in config_files:
         try:
@@ -515,8 +561,8 @@ def _tar_member_name(item: InvItem) -> str:
         return f"{ITEMS_TAR_PREFIX}.ollama/models/manifests/{item.manifest_relative.as_posix()}"
     if item.kind == KIND_CONFIG:
         label = item.name.split(":", 1)[1]
-        if label.startswith("opencode:"):
-            return f"{ITEMS_TAR_PREFIX}.config/opencode/{label.split(':', 1)[1]}"
+        if label.startswith("pi:"):
+            return f"{ITEMS_TAR_PREFIX}.pi/agent/{label.split(':', 1)[1]}"
         if label == "voice2text":
             return f"{ITEMS_TAR_PREFIX}.config/voice2text-ai/config.json"
         if label == "ollama":
@@ -859,7 +905,10 @@ def restore_backup(
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="v2t-backup",
-        description="Back up and restore Voice2Text AI settings, Ollama model selections/models, and OpenCode configuration.",
+        description=(
+            "Back up and restore Voice2Text AI settings, Ollama model "
+            "selections/models, and the pi agent configuration."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -868,7 +917,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Create an encrypted, integrity-checked backup archive.",
         description=(
             "Create a backup of Voice2Text settings, Ollama configuration and model "
-            "manifests, and OpenCode configuration. Model blobs are only included when "
+            "manifests, and the pi agent configuration (pi's credentials and session "
+            "history are never stored). Model blobs are only included when "
             "explicitly selected (-m/--model or --all-models) because they can be re-pulled "
             "with `ollama pull`."
         ),

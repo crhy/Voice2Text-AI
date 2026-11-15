@@ -36,17 +36,23 @@ from voice2text.backup import (
 GPG_AVAILABLE = shutil.which("gpg") is not None or shutil.which("gpg2") is not None
 
 
+@pytest.fixture(autouse=True)
+def _no_real_pi_agent_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let a developer's PI_CODING_AGENT_DIR point the tests at a real home."""
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+
+
 def _digest(data: bytes) -> str:
     return _sha256_bytes(data)
 
 
 def build_fake_home(root: Path) -> dict[str, str]:
-    """Create a fake user home shaped like a real Ollama/OpenCode install.
+    """Create a fake user home shaped like a real Ollama + pi install.
 
     Returns a map of ``model display name -> 64-hex blob part``.
     """
     (root / ".config" / "voice2text-ai").mkdir(parents=True)
-    (root / ".config" / "opencode").mkdir(parents=True)
+    (root / ".pi" / "agent").mkdir(parents=True)
     (root / ".ollama" / "models" / "blobs").mkdir(parents=True)
     (root / ".ollama" / "models" / "manifests" / "registry.ollama.ai" / "library" / "qwen2.5").mkdir(parents=True)
     (root / ".ollama" / "models" / "manifests" / "hf.co" / "ISTA-DASLab" / "Qwen3.8-27B-GSQ-RCO-GGUF").mkdir(
@@ -64,21 +70,46 @@ def build_fake_home(root: Path) -> dict[str, str]:
             }
         )
     )
-    (root / ".config" / "opencode" / "opencode.json").write_text(
-        json.dumps({"$schema": "https://opencode.ai/config.json", "model": "qwen38"})
+    (root / ".pi" / "agent" / "settings.json").write_text(
+        json.dumps(
+            {
+                "compaction": {"enabled": True},
+                "model": "ollama:qwen2.5",
+                "apiKey": "sk-pi-secret-value-0123456789abcdef",
+            }
+        )
     )
-    (root / ".config" / "opencode" / "opencode.custom.jsonc").write_text(json.dumps({"provider": {"local": {}}}))
-    (root / ".config" / "opencode" / "auth.json").write_text(
+    (root / ".pi" / "agent" / "models.json").write_text(
+        json.dumps({"providers": {"local": {"baseUrl": "http://localhost:11434"}}})
+    )
+    (root / ".pi" / "agent" / "mcp.json").write_text(json.dumps({"mcpServers": {"local": {}}}))
+    (root / ".pi" / "agent" / "AGENTS.md").write_text("Speak plainly; never invent facts.\n")
+    (root / ".pi" / "agent" / "extensions").mkdir(parents=True)
+    (root / ".pi" / "agent" / "extensions" / "one.ts").write_text("export default () => {}\n")
+    # Things that must NEVER be picked up: pi's credentials, its conversation
+    # history, the local model store, dependency trees, and hand-made copies.
+    (root / ".pi" / "agent" / "auth.json").write_text(
         json.dumps({"github-copilot": {"OAuthAccessToken": "ghu_secret_token_value_xx"}})
     )
-    # Things that must NOT be picked up.
-    (root / ".config" / "opencode" / "node_modules" / "pkg").mkdir(parents=True)
-    (root / ".config" / "opencode" / "node_modules" / "pkg" / "opencode.json").write_text("leaked")
-    (root / ".config" / "opencode" / "opencode-notes.txt").write_text("not a config")
-    (root / ".config" / "opencode" / "opencode.dev.log").write_text("noise")
+    (root / ".pi" / "agent" / "mcp-auth.json").write_text(
+        json.dumps({"local": {"token": "gho_secret_token_value_yy"}})
+    )
+    (root / ".pi" / "agent" / "sessions").mkdir(parents=True)
+    (root / ".pi" / "agent" / "sessions" / "one.jsonl").write_text(
+        '{"type": "message", "text": "private project data"}\n'
+    )
+    (root / ".pi" / "agent" / "models-store.json").write_text(
+        json.dumps({"models": ["private-project-model"]})
+    )
+    (root / ".pi" / "agent" / "settings.json.backup-20260101-000000").write_text(
+        json.dumps({"apiKey": "sk-hand-made-copy-secret-0123456789abcdef"})
+    )
+    (root / ".pi" / "agent" / "settings.json.bak-autocompact").write_text("leaked")
+    (root / ".pi" / "agent" / "extensions" / "node_modules" / "pkg").mkdir(parents=True)
+    (root / ".pi" / "agent" / "extensions" / "node_modules" / "pkg" / "settings.json").write_text("leaked")
 
     (root / ".ollama" / "config.json").write_text(
-        json.dumps({"dsh": ["qwen38-codex"], "opencode": ["qwen38-opencode-text"]})
+        json.dumps({"dsh": ["qwen38-codex"], "hermes-desktop": ["qwen38-hermes"]})
     )
 
     blob_a = b"AAAA-blob-data-" * 8
@@ -164,13 +195,19 @@ def test_inventory_names_layout(fake_home: tuple[Path, dict[str, str]]) -> None:
     assert names == {
         "config:voice2text",
         "config:ollama",
-        "config:opencode:opencode.json",
-        "config:opencode:opencode.custom.jsonc",
-        "config:opencode:auth.json",
+        "config:pi:settings.json",
+        "config:pi:models.json",
+        "config:pi:mcp.json",
+        "config:pi:AGENTS.md",
+        "config:pi:extensions/one.ts",
         "model:qwen2.5:0.5b",
         "model:hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ3_S",
     }
     assert not any("node_modules" in item.source.parts for item in items)
+    # Credentials, conversation history and the model store stay out of the inventory.
+    forbidden = {"auth.json", "mcp-auth.json", "models-store.json", "sessions", "one.jsonl"}
+    assert not any(part in forbidden for item in items for part in item.source.parts)
+    assert not any(".bak" in item.source.name or ".backup" in item.source.name for item in items)
     kind_by_name = {item.name: item.kind for item in items}
     assert kind_by_name["model:qwen2.5:0.5b"] == KIND_MODEL_MANIFEST
     found = {model.name: model for model in models}
@@ -205,13 +242,13 @@ def test_create_verify_restore_roundtrip_unencrypted(fake_home: tuple[Path, dict
     out = tmp_path / "archive.tar.gz"
     summary = create_backup(out, no_encrypt=True, models=["qwen2.5"], paths=BackupPaths(home=home))
     assert summary["encrypted"] is False
-    assert summary["items"] == 8  # 5 configs + 2 manifests + 1 selected blob
+    assert summary["items"] == 10  # 7 configs + 2 manifests + 1 selected blob
     _verify_archive(out, None, expect_encrypt=False)
 
     root = tmp_path / "restore"
     root.mkdir()
     report = restore_backup(out, destination_root=root)
-    assert report["restored"] == 8
+    assert report["restored"] == 10
     assert report["skipped_newer"] == []
     assert report["verify_failed"] == []
 
@@ -236,8 +273,31 @@ def test_create_verify_restore_roundtrip_unencrypted(fake_home: tuple[Path, dict
         root / ".ollama" / "models" / "manifests" / "hf.co" / "ISTA-DASLab" / "Qwen3.8-27B-GSQ-RCO-GGUF" / "IQ3_S"
     ).is_file()
     assert (root / ".ollama" / "config.json").is_file()
-    assert (root / ".config" / "opencode" / "opencode.json").is_file()
-    assert not (root / ".config" / "opencode" / "node_modules").exists()
+    assert (root / ".pi" / "agent" / "settings.json").is_file()
+    assert (root / ".pi" / "agent" / "extensions" / "one.ts").is_file()
+    assert (root / ".pi" / "agent" / "AGENTS.md").read_text() == "Speak plainly; never invent facts.\n"
+    # pi's private material was never archived, so nothing of it is restored.
+    for never_stored in (
+        "auth.json",
+        "mcp-auth.json",
+        "models-store.json",
+        "sessions",
+        "settings.json.backup-20260101-000000",
+        "settings.json.bak-autocompact",
+    ):
+        assert not (root / ".pi" / "agent" / never_stored).exists()
+    assert not (root / ".pi" / "agent" / "extensions" / "node_modules").exists()
+
+    # The pi settings file lands at .pi/agent/settings.json and comes back redacted.
+    pi_entry = next(
+        item for item in read_manifest(out)["items"] if item["name"] == "config:pi:settings.json"
+    )
+    assert pi_entry["key"] == "items/.pi/agent/settings.json"
+    assert pi_entry["redacted_keys"] == ["apiKey"]
+    pi_cfg = json.loads((root / ".pi" / "agent" / "settings.json").read_text())
+    assert pi_cfg["apiKey"] == REDACTED_MARKER
+    assert pi_cfg["model"] == "ollama:qwen2.5"
+    assert pi_cfg["compaction"] == {"enabled": True}
 
     manifest = read_manifest(out)
     assert manifest["format"] == BACKUP_FORMAT_VERSION
@@ -253,6 +313,17 @@ def test_create_verify_restore_roundtrip_unencrypted(fake_home: tuple[Path, dict
     with tarfile.open(out, "r:gz") as tar:
         for name in tar.getnames():
             assert name == MANIFEST_TAR_KEY or name.startswith("items/"), name
+        # No credential, session history or model-store bytes in the archive.
+        payload = b"".join(
+            tar.extractfile(name).read()
+            for name in tar.getnames()
+            if name != MANIFEST_TAR_KEY
+        )
+    assert b"ghu_secret_token_value_xx" not in payload
+    assert b"gho_secret_token_value_yy" not in payload
+    assert b"private project data" not in payload
+    assert b"private-project-model" not in payload
+    assert b"sk-hand-made-copy-secret" not in payload
 
 
 @pytest.mark.skipif(not GPG_AVAILABLE, reason="gpg is not installed")
@@ -279,7 +350,7 @@ def test_encrypted_roundtrip(fake_home: tuple[Path, dict[str, str]], tmp_path: P
     root = tmp_path / "restore"
     root.mkdir()
     report = restore_backup(out, passphrase_file=pass_file, destination_root=root)
-    assert report["restored"] == 8
+    assert report["restored"] == 10
     assert report["verify_failed"] == []
     cfg = json.loads((root / ".config" / "voice2text-ai" / "config.json").read_bytes())
     assert cfg["api_key"] == REDACTED_MARKER
@@ -310,14 +381,20 @@ def test_newer_file_guard_and_force(fake_home: tuple[Path, dict[str, str]], tmp_
     original = dest.read_bytes()
     future = time.time() + 3600
     os.utime(dest, (future, future))
+    pi_dest = root / ".pi" / "agent" / "settings.json"
+    pi_original = pi_dest.read_bytes()
+    os.utime(pi_dest, (future, future))
 
     report = restore_backup(out, destination_root=root)
     assert "config:voice2text" in report["skipped_newer"]
+    assert "config:pi:settings.json" in report["skipped_newer"]
     assert dest.read_bytes() == original  # untouched
+    assert pi_dest.read_bytes() == pi_original  # pi settings also untouched
 
     forced = restore_backup(out, destination_root=root, force=True)
     assert forced["skipped_newer"] == []
     assert forced["restored"] > 0
+    assert REDACTED_MARKER.encode() in pi_dest.read_bytes()
 
 
 def test_dry_run_select_and_only_kinds(fake_home: tuple[Path, dict[str, str]], tmp_path: Path) -> None:
@@ -336,7 +413,7 @@ def test_dry_run_select_and_only_kinds(fake_home: tuple[Path, dict[str, str]], t
     root2 = tmp_path / "restore2"
     root2.mkdir()
     cfg_only = restore_backup(out, destination_root=root2, only_kinds={"config"})
-    assert cfg_only["restored"] == 5  # v2t + ollama + 3 opencode configs
+    assert cfg_only["restored"] == 7  # v2t + ollama + 5 pi agent configs
     assert not list((root2 / ".ollama" / "models").rglob("manifests"))
     blobs_dir = root2 / ".ollama" / "models" / "blobs"
     assert not blobs_dir.is_dir() or not list(blobs_dir.iterdir())
@@ -373,11 +450,48 @@ def test_missing_v2t_config_is_a_warning(tmp_path: Path) -> None:
     (home / ".config" / "voice2text-ai" / "config.json").write_text("{}")
     _items, _models, warnings = build_inventory(BackupPaths(home=home), hash_blobs=False)
     assert any("missing:" in w and ".ollama/config.json" in w for w in warnings)
-    assert not any("opencode" in w for w in warnings)  # absent opencode dir is silent
+    assert not any(".pi" in w for w in warnings)  # absent pi agent dir is silent
     # v2t config alone still yields an archive.
     out = tmp_path / "archive.tar.gz"
     summary = create_backup(out, no_encrypt=True, paths=BackupPaths(home=home))
     assert summary["items"] == 1
+
+
+def test_pi_agent_dir_follows_pi_coding_agent_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PI_CODING_AGENT_DIR relocates what is inventoried; the archive layout does not move."""
+    home = tmp_path / "home"
+    (home / ".config" / "voice2text-ai").mkdir(parents=True)
+    (home / ".config" / "voice2text-ai" / "config.json").write_text("{}", encoding="utf-8")
+    default_dir = home / ".pi" / "agent"
+    default_dir.mkdir(parents=True)
+    (default_dir / "settings.json").write_text(json.dumps({"model": "default-location"}))
+    elsewhere = tmp_path / "relocated" / "pi-agent"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "settings.json").write_text(json.dumps({"model": "ollama:qwen2.5"}))
+
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(elsewhere))
+    paths = BackupPaths(home=home)
+    assert paths.pi_agent_dir == elsewhere
+    items, _models, warnings = build_inventory(paths, hash_blobs=False)
+    assert {item.name for item in items} == {"config:voice2text", "config:pi:settings.json"}
+    assert not any(".pi" in w for w in warnings)
+
+    out = tmp_path / "archive.tar.gz"
+    create_backup(out, no_encrypt=True, paths=paths)
+    keys = {item["key"] for item in read_manifest(out)["items"]}
+    assert keys == {"items/.config/voice2text-ai/config.json", "items/.pi/agent/settings.json"}
+
+    root = tmp_path / "restore"
+    root.mkdir()
+    report = restore_backup(out, destination_root=root)
+    assert report["restored"] == 2
+    restored = json.loads((root / ".pi" / "agent" / "settings.json").read_text())
+    assert restored["model"] == "ollama:qwen2.5"  # the relocated directory won
+
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    assert BackupPaths(home=home).pi_agent_dir == default_dir
 
 
 def test_main_cli_end_to_end(
@@ -393,7 +507,7 @@ def test_main_cli_end_to_end(
     out = tmp_path / "archive.tar.gz"
     rc = main(["create", "--output", str(out), "--no-encrypt", "-m", "qwen2.5"])
     assert rc == 0
-    assert "Backed up 8 items (2 models known)" in capsys.readouterr().out
+    assert "Backed up 10 items (2 models known)" in capsys.readouterr().out
 
     rc = main(["verify", str(out)])
     assert rc == 0
@@ -418,6 +532,6 @@ def test_main_cli_home_dir_flag(
     assert rc == 0
     # Without --home-dir the real $HOME would be scanned; the fake home's two
     # fake models confirm the flag took effect.
-    assert "Backed up 7 items (2 models known)" in capsys.readouterr().out
+    assert "Backed up 9 items (2 models known)" in capsys.readouterr().out
     manifest = read_manifest(out)
     assert not [item for item in manifest["items"] if item["kind"] == KIND_MODEL_BLOB]

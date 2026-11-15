@@ -9,10 +9,17 @@ restoring:
 - **Ollama model manifests** — everything under `~/.ollama/models/manifests/`
   (this is what records *which models are installed/selected*, with sizes and
   blob digests)
-- **OpenCode configuration** — `~/.config/opencode/opencode.json`, any
-  `opencode*.jsonc` files, and `auth.json` (secrets inside are redacted; see
-  below). Files under `node_modules/`, logs, caches, and other non-config
-  files are skipped.
+- **pi agent configuration** — the pi coding agent's user configuration in
+  `~/.pi/agent`, or wherever the `PI_CODING_AGENT_DIR` environment variable points:
+  `settings.json`, `keybindings.json`, `mcp.json`, `models.json`, the instruction
+  files (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`,
+  `SYSTEM.md`, `APPEND_SYSTEM.md`) and the `extensions/`, `skills/`, `prompts/` and
+  `themes/` subtrees. Secret-looking values inside those files are redacted (see
+  below). `auth.json`, `mcp-auth.json` and everything under `sessions/` (conversation
+  history) are **never stored**, and neither are `models-store.json`, files under
+  `node_modules/`, caches, logs, or hand-made copies (`*.bak*`, `*.backup*`, `*.old*`,
+  `*.tmp*`): issue #26 requires tokens, credentials and conversation history to be
+  excluded by default, so a backup of your pi setup is portable without being private.
 - **Model blobs (optional)** — the large weight files in
   `~/.ollama/models/blobs/`. These are only included when you explicitly
   select them (`-m` / `--all-models`) because they can always be re-downloaded
@@ -61,7 +68,8 @@ encryption) — containing:
 - `items/...` — the actual files:
   - `items/.config/voice2text-ai/config.json`
   - `items/.ollama/config.json`
-  - `items/.config/opencode/<file>`
+  - `items/.pi/agent/<relative path>` (for example `items/.pi/agent/settings.json`,
+    `items/.pi/agent/extensions/one.ts`)
   - `items/.ollama/models/manifests/<registry>/<path>`
   - `items/.ollama/models/blobs/sha256-<64-hex>` (only for selected models)
 
@@ -148,8 +156,11 @@ original. On a clean system:
    v2t-backup restore backup.tar.gz.gpg --passphrase-file ./pass.txt --only config
    ```
    This puts `~/.config/voice2text-ai/config.json`, `~/.ollama/config.json`,
-   and the OpenCode config back in place. Re-enter any values reported as
-   redacted (API keys, OAuth tokens, etc.).
+   and the pi agent configuration back in place under `~/.pi/agent/…` (or under
+   `--destination-root`, if you are inspecting first). Re-enter any values reported
+   as redacted (API keys, OAuth tokens, etc.); pi's own `auth.json` and
+   `sessions/` are deliberately not in the archive, so re-create those on the new
+   machine by signing in again rather than by restoring.
 2. Check which models need downloading: run `ollama list` and compare with the
    archive manifest's `models[]`. For each model **not** present locally, run:
    ```sh
@@ -181,3 +192,7 @@ If steps 1–4 succeed, the backup/restore round trip is verified end-to-end.
   unrecoverable (no key backup).
 - Restoring to a home that has *newer* settings will skip the older entries
   and exit with code 2 — review the printed list before using `--force`.
+- The pi agent directory is read, never written, by `create`. If `PI_CODING_AGENT_DIR`
+  is set, that directory is inventoried instead of `~/.pi/agent`; the archive always
+  stores pi files under `.pi/agent/…`, so a restore onto a machine that does not set
+  the variable still lands them in pi's default location.
