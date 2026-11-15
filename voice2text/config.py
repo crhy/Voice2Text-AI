@@ -24,6 +24,10 @@ class Settings:
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
     wake_word: str = "computer"
+    # Consent for the local memory of what was said (issue #27): off until the
+    # user turns it on, and remembered turns age out after this many days.
+    memory_enabled: bool = False
+    memory_retention_days: int = 30
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -36,6 +40,8 @@ class Settings:
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
         self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
+        self.memory_enabled = bool(self.memory_enabled)
+        self.memory_retention_days = max(1, min(3650, int(self.memory_retention_days)))
         return self
 
 

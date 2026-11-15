@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -18,6 +19,7 @@ from .conversation import ConversationController  # noqa: E402
 from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
+from .memory import MemoryStore  # noqa: E402
 from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
@@ -94,6 +96,16 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.config_store = ConfigStore()
         self.settings = self.config_store.load()
+        # What was said on earlier occasions, kept only while the user opts in
+        # (settings.memory_enabled). Retrieval adds context to a prompt; it
+        # never trains or changes anything.
+        self.memory = MemoryStore(enabled=self.settings.memory_enabled)
+        if self.memory.enabled:
+            # Retention is part of the consent: remembered turns age out.
+            try:
+                self.memory.prune(self.settings.memory_retention_days)
+            except Exception as exc:  # noqa: BLE001 - memory must never block startup
+                logging.debug("memory: startup prune failed: %s", exc)
         self.style_manager = Adw.StyleManager.get_default()
         self._apply_appearance()
         self.whisper = WhisperService()
@@ -1215,6 +1227,16 @@ class MainWindow(Adw.ApplicationWindow):
                 self._conversation_history.append({"role": "system", "content": CONVERSATION_SYSTEM_PROMPT})
             self._conversation_history.append({"role": "user", "content": prompt})
             messages: list[dict[str, str]] | None = list(self._conversation_history)
+            # Consent is the setting, so context_for returns nothing while
+            # memory_enabled is off; when it does return something, the remembered
+            # turns join the chat as extra context ahead of the live thread.
+            try:
+                remembered = self.memory.context_for(prompt)
+            except Exception as exc:  # noqa: BLE001 - memory must never break a reply
+                logging.debug("memory: retrieval failed: %s", exc)
+                remembered = []
+            if remembered:
+                messages = [*remembered, *messages]
             self._pending_user_generation = generation
         else:
             messages = None
@@ -1302,9 +1324,31 @@ class MainWindow(Adw.ApplicationWindow):
         if spoken and self.conversation_active:
             self._conversation_history.append({"role": "assistant", "content": spoken})
             self._conversation_speak(spoken)
+            self._remember_turn(spoken)
         elif answer and self.settings.auto_speak:
             self.speak_response()
         return False
+
+    def _remember_turn(self, reply: str) -> None:
+        # The opt-in memory of what was said: the question is still the last
+        # user turn in the history when the answer lands. record() itself is
+        # silent while memory_enabled is off, and never raises out of here.
+        prompt = ""
+        for entry in reversed(self._conversation_history):
+            if entry.get("role") == "user":
+                prompt = entry.get("content", "")
+                break
+        if not prompt:
+            return
+        try:
+            self.memory.record(
+                prompt,
+                reply,
+                kind="conversation",
+                provenance={"channel": "conversation", "model": self.settings.ollama_model},
+            )
+        except Exception as exc:  # noqa: BLE001 - memory must never break a reply
+            logging.debug("memory: could not record the turn: %s", exc)
 
     def _on_query_error(
         self, error: str, generation: int, cancel_event: threading.Event

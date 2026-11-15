@@ -28,6 +28,7 @@ ignore = ["E501"]
 [project.scripts]
 voice2text-ai = "voice2text.__main__:main"
 v2t-backup = "voice2text.backup:main"
+v2t-memory = "voice2text.memory:main"
 
 [tool.setuptools.packages.find]
 include = ["voice2text*"]

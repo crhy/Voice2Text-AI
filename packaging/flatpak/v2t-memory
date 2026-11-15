@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# In-sandbox entry point for the Voice2Text AI memory inspector.
+# The sandboxed home holds no real app data, so point --memory-file at the
+# memory you mean (or run the tool on the host) instead of guessing a path.
+PYTHONPATH="/app/lib/voice2text-ai${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+
+exec python3 -m voice2text.memory "$@"

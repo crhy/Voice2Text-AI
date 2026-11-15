@@ -27,6 +27,11 @@ Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
   remembers the earlier turns of the exchange, you can talk over a spoken
   reply to interrupt it, and "cancel" or "goodbye" ends the conversation by
   voice.
+- **Opt-in memory of what was said** — switch on `memory_enabled` and the app
+  keeps your past questions and answers on your own machine, so a later prompt
+  can pull them back as context. It is off by default, secret-looking values
+  are redacted before they are written, and `v2t-memory inspect/export/delete`
+  is how you see, take out or purge what it holds.
 - **Hardware-aware model suggestions** — Preferences shows Ollama models
   sized to fit your detected GPU VRAM (or system RAM if there's no GPU).
 - **One-click Ollama install and model management** — install or update
@@ -116,6 +121,17 @@ from the Preferences dialog.
 Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).
+
+The memory of what was said is **off until you turn it on**. With
+`memory_enabled` set to `true` in that same config file, each conversation
+question and its answer is appended to
+`$XDG_DATA_HOME/voice2text-ai/memory.jsonl`, with secret-looking values
+redacted before they are written. `v2t-memory inspect` shows what it
+remembers, `v2t-memory export --output memory.json` writes it out as JSON,
+`v2t-memory delete <words>` (or `delete --all`) removes what you name,
+`v2t-memory prune` forgets turns older than `memory_retention_days`, and
+`v2t-memory eval` scores that retrieval offline without calling a model. Nothing
+is uploaded anywhere, and nothing is trained on the memory.
 
 ## Acknowledgements
 
