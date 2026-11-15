@@ -20,9 +20,9 @@ from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
-from .opencode import (  # noqa: E402
+from .pi_agent import (  # noqa: E402
     AuditLog,
-    OpenCodeError,
+    PiAgentError,
     PlanStore,
     continuation_argv,
     parse_reply_text,
@@ -62,9 +62,9 @@ CONVERSATION_SYSTEM_PROMPT = (
 # requirement keeps a cough from killing the reply.
 BARGE_IN_GRACE_SECONDS = 0.6
 BARGE_IN_STREAK = 3
-# OpenCode continuation: one supervised run at a time, time-bounded, and only
+# pi continuation: one supervised run at a time, time-bounded, and only
 # ever inside the directories the user listed in Preferences.
-OPENCODE_RUN_TIMEOUT_SECONDS = 600.0
+PI_RUN_TIMEOUT_SECONDS = 600.0
 
 
 def idle(callback: Callable, *args) -> None:
@@ -145,14 +145,14 @@ class MainWindow(Adw.ApplicationWindow):
         self._has_gpu = False
         self._gpu_poll_stop: threading.Event | None = None
         self._model_combo_updating = False
-        # OpenCode continuation state: the plan/checkpoint store, the audit
+        # pi continuation state: the plan/checkpoint store, the audit
         # log, and the kill switch for the one supervised run at a time.
-        self.opencode_plan = PlanStore()
-        self.opencode_audit = AuditLog()
-        self.opencode_stop: threading.Event | None = None
-        self._opencode_running = False
-        self._opencode_paused = False
-        self._opencode_status_generation = 0
+        self.pi_plan = PlanStore()
+        self.pi_audit = AuditLog()
+        self.pi_stop: threading.Event | None = None
+        self._pi_running = False
+        self._pi_paused = False
+        self._pi_status_generation = 0
 
         self._build_ui()
         self._install_actions()
@@ -196,8 +196,8 @@ class MainWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
         menu.append("Keyboard Shortcuts", "win.shortcuts")
-        menu.append("OpenCode status", "win.opencode-status")
-        menu.append("OpenCode continue", "win.opencode-continue")
+        menu.append("pi status", "win.pi-status")
+        menu.append("pi continue", "win.pi-continue")
         menu.append("About Voice2Text AI", "app.about")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         header.pack_end(menu_button)
@@ -294,13 +294,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.stop_button.connect("clicked", lambda *_: self.stop_current_work())
         action_bar.pack_end(self.stop_button)
 
-        self.opencode_button = Gtk.Button(label="OpenCode")
-        self.opencode_button.set_tooltip_text(
-            "Run one supervised OpenCode continuation in the allowed project"
+        self.pi_button = Gtk.Button(label="pi")
+        self.pi_button.set_tooltip_text(
+            "Run one supervised pi continuation in the allowed project"
         )
-        self.opencode_button.set_sensitive(self.settings.opencode_enabled)
-        self.opencode_button.connect("clicked", lambda *_: self.continue_with_opencode())
-        action_bar.pack_end(self.opencode_button)
+        self.pi_button.set_sensitive(self.settings.pi_enabled)
+        self.pi_button.connect("clicked", lambda *_: self.continue_with_pi())
+        action_bar.pack_end(self.pi_button)
 
     def _build_editor(self, title: str, *, editable: bool, transcript: bool) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -346,8 +346,8 @@ class MainWindow(Adw.ApplicationWindow):
             "copy": self.copy_transcript,
             "copy-response": self.copy_response,
             "clear": self.clear_all,
-            "opencode-status": self.show_opencode_status,
-            "opencode-continue": self.continue_with_opencode,
+            "pi-status": self.show_pi_status,
+            "pi-continue": self.continue_with_pi,
         }
         for name, callback in actions.items():
             action = Gio.SimpleAction.new(name, None)
@@ -912,7 +912,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.listening:
             self.stop_recording()
         # The one automatic hook: a transcript that finished by itself can
-        # hand its next step to OpenCode. Needs both switches on, and still
+        # hand its next step to pi. Needs both switches on, and still
         # passes every allowlist check a manual press passes.
         self._maybe_auto_continue()
         return False
@@ -1384,54 +1384,54 @@ class MainWindow(Adw.ApplicationWindow):
         self._toast(error)
         return False
 
-    # --- OpenCode continuation -------------------------------------------------
+    # --- pi continuation -------------------------------------------------
 
-    def show_opencode_status(self) -> None:
-        """Read-only OpenCode status plus suggested next actions.
+    def show_pi_status(self) -> None:
+        """Read-only pi status plus suggested next actions.
 
         The only commands this can run are git's own inspection commands, and
         only for a project inside the allowlist; the result is text in the
         response pane, never an action on the project.
         """
-        if self._opencode_running:
-            self._toast("An OpenCode run is already in progress.")
+        if self._pi_running:
+            self._toast("A pi run is already in progress.")
             return
-        project = self.settings.opencode_project
+        project = self.settings.pi_project
         if not project:
             self._set_text(
                 self.response_view,
-                "OpenCode continuation is off: no project is set.\n"
-                "Pick one in Preferences → OpenCode, together with the directories it may work in.",
+                "pi continuation is off: no project is set.\n"
+                "Pick one in Preferences → pi continuation, together with the directories it may work in.",
             )
-            self._set_status("OpenCode status: no project set.")
+            self._set_status("pi status: no project set.")
             return
-        if not project_allowed(project, self.settings.opencode_allowed_dirs):
-            allowed = ", ".join(self.settings.opencode_allowed_dirs) or "(none)"
+        if not project_allowed(project, self.settings.pi_allowed_dirs):
+            allowed = ", ".join(self.settings.pi_allowed_dirs) or "(none)"
             self._set_text(
                 self.response_view,
-                f"OpenCode: {project} is not inside an allowed directory.\n"
+                f"pi: {project} is not inside an allowed directory.\n"
                 f"Allowed directories: {allowed}\n"
                 "Nothing was run.",
             )
-            self._set_status("OpenCode status: project not allowed.")
-            self.opencode_audit.record("status-refused", detail=f"project={project}")
+            self._set_status("pi status: project not allowed.")
+            self.pi_audit.record("status-refused", detail=f"project={project}")
             return
 
-        self._set_status("Checking OpenCode status…", busy=True)
-        self._opencode_status_generation += 1
-        generation = self._opencode_status_generation
+        self._set_status("Checking pi status…", busy=True)
+        self._pi_status_generation += 1
+        generation = self._pi_status_generation
         transcript = self._get_text(self.transcript_view)
-        allowed_dirs = list(self.settings.opencode_allowed_dirs)
+        allowed_dirs = list(self.settings.pi_allowed_dirs)
 
         def worker() -> None:
             status = read_only_status(project, allowed_dirs=allowed_dirs)
             suggestions = suggested_next_actions(status, transcript)
-            idle(self._apply_opencode_status, status, suggestions, generation)
+            idle(self._apply_pi_status, status, suggestions, generation)
 
-        threading.Thread(target=worker, name="opencode-status", daemon=True).start()
+        threading.Thread(target=worker, name="pi-status", daemon=True).start()
 
-    def _apply_opencode_status(self, status, suggestions: list[str], generation: int) -> bool:
-        if generation != self._opencode_status_generation:
+    def _apply_pi_status(self, status, suggestions: list[str], generation: int) -> bool:
+        if generation != self._pi_status_generation:
             return False
         lines = [f"Project: {status.project}"]
         if status.error:
@@ -1451,37 +1451,37 @@ class MainWindow(Adw.ApplicationWindow):
         lines.append("Suggested next actions:")
         lines.extend(f"  - {line}" for line in suggestions)
         self._set_text(self.response_view, "\n".join(lines))
-        self._set_status("OpenCode status ready (read-only).")
-        self.opencode_audit.record("status", detail=f"project={status.project}")
+        self._set_status("pi status ready (read-only).")
+        self.pi_audit.record("status", detail=f"project={status.project}")
         return False
 
-    def continue_with_opencode(self, *, auto: bool = False) -> None:
-        """Run one supervised continuation of the project through the OpenCode CLI.
+    def continue_with_pi(self, *, auto: bool = False) -> None:
+        """Run one supervised continuation of the project through the pi CLI.
 
         Gated twice: the feature must be enabled, and the project must sit
         inside the allowlist. The automatic hook (``auto``) additionally needs
         the auto-run switch. Either way the run is killable, time-bounded,
-        audited, checkpointed, and never auto-approves permissions.
+        audited, checkpointed, and never trusts project-local files.
         """
-        if auto and not self.settings.opencode_auto_run:
+        if auto and not self.settings.pi_auto_run:
             return
-        if not self.settings.opencode_enabled:
+        if not self.settings.pi_enabled:
             if not auto:
-                self._toast("OpenCode continuation is off — turn it on in Preferences → OpenCode first.")
-                self._set_status("OpenCode continuation is off.")
+                self._toast("pi continuation is off — turn it on in Preferences → pi continuation first.")
+                self._set_status("pi continuation is off.")
             return
-        if self._opencode_running:
+        if self._pi_running:
             if not auto:
-                self._toast("An OpenCode run is already in progress.")
+                self._toast("A pi run is already in progress.")
             return
 
-        project = self.settings.opencode_project
-        allowed_dirs = list(self.settings.opencode_allowed_dirs)
+        project = self.settings.pi_project
+        allowed_dirs = list(self.settings.pi_allowed_dirs)
         if not project or not project_allowed(project, allowed_dirs):
             if not auto:
-                self._toast("The OpenCode project is not inside an allowed directory — nothing was run.")
-            self._set_status("OpenCode continuation refused: project not allowed.")
-            self.opencode_audit.record("run-refused", detail=f"project={project or '(unset)'}")
+                self._toast("The pi project is not inside an allowed directory — nothing was run.")
+            self._set_status("pi continuation refused: project not allowed.")
+            self.pi_audit.record("run-refused", detail=f"project={project or '(unset)'}")
             return
 
         message = self._get_text(self.transcript_view)
@@ -1491,94 +1491,98 @@ class MainWindow(Adw.ApplicationWindow):
             return
 
         stop_event = threading.Event()
-        self.opencode_stop = stop_event
-        self._opencode_running = True
-        self._opencode_paused = False
-        self.opencode_button.set_sensitive(False)
+        self.pi_stop = stop_event
+        self._pi_running = True
+        self._pi_paused = False
+        self.pi_button.set_sensitive(False)
 
-        plan = self.opencode_plan.load()
+        plan = self.pi_plan.load()
         steps = plan.get("steps") or [message]
         session = plan.get("session_id", "")
-        self.opencode_plan.save(project=project, steps=steps, session_id=session)
+        self.pi_plan.save(project=project, steps=steps, session_id=session)
 
+        # pi has no ``--dir``: the working directory ``run_continuation`` sets
+        # is what places the run inside the allowed project. The run is also
+        # ephemeral (``--no-session``), so pi's own context is not carried over
+        # between steps — the plan file is what remembers them, and the session
+        # id of each run is still recorded for traceability.
         argv = continuation_argv(
             message,
-            project=project,
-            model=self.settings.opencode_model,
-            session=session,
+            provider=self.settings.pi_provider,
+            model=self.settings.pi_model,
         )
-        self.opencode_audit.record("run", argv=argv, detail=f"project={project}")
+        self.pi_audit.record("run", argv=argv, detail=f"project={project}")
         self._set_text(self.response_view, "")
-        self._set_status("OpenCode running…", busy=True)
+        self._set_status("pi running…", busy=True)
 
         def worker() -> None:
             try:
                 result = run_continuation(
                     argv,
                     cwd=project,
-                    timeout=OPENCODE_RUN_TIMEOUT_SECONDS,
+                    timeout=PI_RUN_TIMEOUT_SECONDS,
                     stop_event=stop_event,
                     allowed_dirs=allowed_dirs,
                 )
-            except OpenCodeError as exc:
-                idle(self._on_opencode_error, str(exc), message)
+            except PiAgentError as exc:
+                idle(self._on_pi_error, str(exc), message)
                 return
-            idle(self._on_opencode_finished, result, message)
+            idle(self._on_pi_finished, result, message)
 
-        threading.Thread(target=worker, name="opencode-continuation", daemon=True).start()
+        threading.Thread(target=worker, name="pi-continuation", daemon=True).start()
 
     def _maybe_auto_continue(self) -> None:
         """Automatic hook: it only ever calls the fully gated continuation."""
-        self.continue_with_opencode(auto=True)
+        self.continue_with_pi(auto=True)
 
-    def _on_opencode_finished(self, result, step: str) -> bool:
-        self._opencode_running = False
-        self.opencode_stop = None
-        self._opencode_paused = False
-        self.opencode_button.set_sensitive(True)
+    def _on_pi_finished(self, result, step: str) -> bool:
+        self._pi_running = False
+        self.pi_stop = None
+        self._pi_paused = False
+        self.pi_button.set_sensitive(True)
 
         if result.stopped:
             outcome = "stopped"
-            self._set_status("OpenCode paused.")
-            self._toast("Paused — nothing runs again until you press OpenCode.")
+            self._set_status("pi paused.")
+            self._toast("Paused — nothing runs again until you press pi.")
         elif result.timed_out:
             outcome = "timed-out"
-            self._set_status("OpenCode run timed out.")
+            self._set_status("pi run timed out.")
         elif result.returncode != 0:
             outcome = "failed"
-            self._set_status("OpenCode run failed.")
+            self._set_status("pi run failed.")
         else:
             outcome = "finished"
-            self._set_status("OpenCode run complete.")
+            self._set_status("pi run complete.")
 
         body = parse_reply_text(result.stdout)
         if result.stderr:
             body = f"{body}\n{result.stderr}".strip() if body else result.stderr
-        self._set_text(self.response_view, body or "(OpenCode produced no output)")
+        self._set_text(self.response_view, body or "(pi produced no output)")
 
-        self.opencode_plan.checkpoint(
-            project=self.settings.opencode_project,
+        self.pi_plan.checkpoint(
+            project=self.settings.pi_project,
             step=step,
             session_id=result.session_id,
             status=outcome,
         )
-        self.opencode_audit.record(
+        self.pi_audit.record(
             outcome,
             detail=f"exit={result.returncode} session={result.session_id or '(none)'}",
         )
         return False
 
-    def _on_opencode_error(self, error: str, step: str) -> bool:
-        self._opencode_running = False
-        self.opencode_stop = None
-        self.opencode_button.set_sensitive(True)
+    def _on_pi_error(self, error: str, step: str) -> bool:
+        self._pi_running = False
+        self.pi_stop = None
+        self.pi_button.set_sensitive(True)
         self._toast(error)
-        self._set_text(self.response_view, f"OpenCode did not run.\n{error}")
-        self._set_status("OpenCode continuation failed.")
-        self.opencode_plan.checkpoint(
-            project=self.settings.opencode_project, step=step, status="error"
+        self._set_text(self.response_view, f"pi did not run.\n{error}")
+        self._set_status("pi continuation failed.")
+        self.pi_plan.checkpoint(
+            project=self.settings.pi_project, step=step, status="error"
         )
-        self.opencode_audit.record("error", detail=error[:120])
+        self.pi_audit.record("error", detail=error[:120])
         return False
 
     def stop_current_work(self) -> None:
@@ -1588,17 +1592,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.stop_conversation_mode()
         if self._installing:
             self._install_cancel.set()
-        # Pause also kills the supervised OpenCode run: the child process is
+        # Pause also kills the supervised pi run: the child process is
         # terminated, and the status line says "Paused" rather than pretending
         # the work finished.
-        if self._opencode_running and self.opencode_stop is not None:
-            self.opencode_stop.set()
-            self._opencode_paused = True
+        if self._pi_running and self.pi_stop is not None:
+            self.pi_stop.set()
+            self._pi_paused = True
         self.query_cancel.set()
         self._query_generation += 1
         self.speech.stop()
         self.ask_button.set_sensitive(True)
-        self._set_status("Paused." if self._opencode_paused else "Stopped.")
+        self._set_status("Paused." if self._pi_paused else "Stopped.")
 
     @staticmethod
     def _gtk_theme_prefers_dark() -> bool:
@@ -1724,50 +1728,57 @@ class MainWindow(Adw.ApplicationWindow):
         ai_group.add(manage_row)
         dialog.add(ai_page)
 
-        opencode_page = Adw.PreferencesPage(title="OpenCode", icon_name="system-run-symbolic")
-        opencode_page.set_description(
-            "Hand one supervised step of a project to the OpenCode CLI. Off by default."
+        pi_page = Adw.PreferencesPage(title="pi continuation", icon_name="system-run-symbolic")
+        pi_page.set_description(
+            "Hand one supervised step of a project to the pi coding agent. Off by default."
         )
-        opencode_group = Adw.PreferencesGroup(
+        pi_group = Adw.PreferencesGroup(
             description=(
                 "Runs stay inside the directories you allow, are written to an audit log, "
-                "can be paused at any time, and never auto-approve permissions."
+                "can be paused at any time, and never trust project-local files.",
             ),
         )
-        opencode_page.add(opencode_group)
+        pi_page.add(pi_group)
 
         enabled_row = Adw.SwitchRow(
-            title="Continue projects with OpenCode",
-            subtitle="Off means no OpenCode run can start",
+            title="Continue projects with pi",
+            subtitle="Off means no pi run can start",
         )
-        enabled_row.set_active(self.settings.opencode_enabled)
-        opencode_group.add(enabled_row)
+        enabled_row.set_active(self.settings.pi_enabled)
+        pi_group.add(enabled_row)
 
         auto_row = Adw.SwitchRow(
             title="Continue automatically when a transcript finishes",
             subtitle="Needs the switch above too, and still only inside the allowed directories",
         )
-        auto_row.set_active(self.settings.opencode_auto_run)
-        opencode_group.add(auto_row)
+        auto_row.set_active(self.settings.pi_auto_run)
+        pi_group.add(auto_row)
 
         project_row = Adw.EntryRow(title="Project to continue")
-        project_row.set_text(self.settings.opencode_project)
-        opencode_group.add(project_row)
+        project_row.set_text(self.settings.pi_project)
+        pi_group.add(project_row)
 
         dirs_row = Adw.EntryRow(
             title="Allowed project directories",
             subtitle="Separated by ':' — an empty list means nothing may be touched",
         )
-        dirs_row.set_text(os.pathsep.join(self.settings.opencode_allowed_dirs))
-        opencode_group.add(dirs_row)
+        dirs_row.set_text(os.pathsep.join(self.settings.pi_allowed_dirs))
+        pi_group.add(dirs_row)
 
         model_row = Adw.EntryRow(
-            title="OpenCode model",
-            subtitle="provider/model as the CLI names it — blank uses its default",
+            title="pi model",
+            subtitle="as pi names it — blank uses its default",
         )
-        model_row.set_text(self.settings.opencode_model)
-        opencode_group.add(model_row)
-        dialog.add(opencode_page)
+        model_row.set_text(self.settings.pi_model)
+        pi_group.add(model_row)
+
+        provider_row = Adw.EntryRow(
+            title="pi provider",
+            subtitle="only needed when the model name is ambiguous",
+        )
+        provider_row.set_text(self.settings.pi_provider)
+        pi_group.add(provider_row)
+        dialog.add(pi_page)
 
         conversation_page = Adw.PreferencesPage(title="Conversation mode", icon_name="microphone-sensitivity-muted-symbolic")
         conversation_page.set_description("Hands-free exchanges: say the wake word, then your question.")
@@ -1851,16 +1862,17 @@ class MainWindow(Adw.ApplicationWindow):
         self.settings.appearance = APPEARANCE_VALUES[appearance_row.get_selected()]
         self.settings.tts_voice = TTS_VOICES[voice_row.get_selected()][1]
         self.settings.tts_rate = int(rate_row.get_value())
-        self.settings.opencode_enabled = enabled_row.get_active()
-        self.settings.opencode_auto_run = auto_row.get_active()
-        self.settings.opencode_project = project_row.get_text().strip()
-        self.settings.opencode_allowed_dirs = [
+        self.settings.pi_enabled = enabled_row.get_active()
+        self.settings.pi_auto_run = auto_row.get_active()
+        self.settings.pi_project = project_row.get_text().strip()
+        self.settings.pi_allowed_dirs = [
             part.strip() for part in dirs_row.get_text().split(os.pathsep) if part.strip()
         ]
-        self.settings.opencode_model = model_row.get_text().strip()
+        self.settings.pi_model = model_row.get_text().strip()
+        self.settings.pi_provider = provider_row.get_text().strip()
         self.config_store.save(self.settings)
         self._apply_appearance()
-        self.opencode_button.set_sensitive(self.settings.opencode_enabled)
+        self.pi_button.set_sensitive(self.settings.pi_enabled)
         if new_whisper != self.settings.whisper_model:
             self._load_whisper(new_whisper)
         self._refresh_ollama_models()

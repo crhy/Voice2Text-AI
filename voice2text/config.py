@@ -8,6 +8,18 @@ from pathlib import Path
 from typing import Any
 
 
+# The continuation feature used to drive the OpenCode CLI; it drives pi now. These
+# are the settings keys of that earlier era, read once and carried over so a
+# user's existing choices are not lost.
+PI_KEY_MIGRATION = {
+    "opencode_enabled": "pi_enabled",
+    "opencode_auto_run": "pi_auto_run",
+    "opencode_project": "pi_project",
+    "opencode_allowed_dirs": "pi_allowed_dirs",
+    "opencode_model": "pi_model",
+}
+
+
 def _clean_dirs(values: list[str]) -> list[str]:
     """Trim the allowlist, drop blank entries and keep it in order.
 
@@ -41,14 +53,15 @@ class Settings:
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
     wake_word: str = "computer"
-    # OpenCode continuation is opt-in per directory: the feature stays off
-    # until the user turns it on *and* names a project inside an allowed
-    # directory, and auto-run needs a second switch on top of that.
-    opencode_enabled: bool = False
-    opencode_auto_run: bool = False
-    opencode_project: str = ""
-    opencode_allowed_dirs: list[str] = field(default_factory=list)
-    opencode_model: str = ""
+    # pi continuation is opt-in per directory: the feature stays off until the
+    # user turns it on *and* names a project inside an allowed directory, and
+    # auto-run needs a second switch on top of that.
+    pi_enabled: bool = False
+    pi_auto_run: bool = False
+    pi_project: str = ""
+    pi_allowed_dirs: list[str] = field(default_factory=list)
+    pi_provider: str = ""
+    pi_model: str = ""
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -61,14 +74,15 @@ class Settings:
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
         self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
-        self.opencode_enabled = bool(self.opencode_enabled)
-        self.opencode_auto_run = bool(self.opencode_auto_run)
-        self.opencode_project = self.opencode_project.strip()
-        # Keep the model as the CLI's own "provider/model" text; anything the
-        # user typed is passed through unchanged so a new provider naming
-        # scheme does not get rejected by this app.
-        self.opencode_model = self.opencode_model.strip()[:80]
-        self.opencode_allowed_dirs = _clean_dirs(self.opencode_allowed_dirs)
+        self.pi_enabled = bool(self.pi_enabled)
+        self.pi_auto_run = bool(self.pi_auto_run)
+        self.pi_project = self.pi_project.strip()
+        # pi picks its model with ``--provider <name> --model <id>``; both stay
+        # free text here, so a provider naming scheme this app does not know
+        # about is passed through instead of rejected.
+        self.pi_provider = self.pi_provider.strip()[:40]
+        self.pi_model = self.pi_model.strip()[:80]
+        self.pi_allowed_dirs = _clean_dirs(self.pi_allowed_dirs)
         return self
 
 
@@ -99,6 +113,9 @@ class ConfigStore:
             clean["ollama_model"] = payload["selected_model"]
         if "microphone_name" in payload:
             clean["microphone_name"] = payload["microphone_name"]
+        for legacy_key, new_key in PI_KEY_MIGRATION.items():
+            if new_key not in clean and legacy_key in payload:
+                clean[new_key] = payload[legacy_key]
 
         try:
             return Settings(**clean).normalized()

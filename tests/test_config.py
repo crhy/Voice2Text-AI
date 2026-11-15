@@ -47,32 +47,77 @@ def test_wake_word_falls_back_to_default_when_blank(tmp_path: Path) -> None:
     assert store.load().wake_word == "computer"
 
 
-def test_opencode_settings_default_to_off(tmp_path: Path) -> None:
+def test_pi_settings_default_to_off(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path / "config.json")
     loaded = store.load()
 
-    assert loaded.opencode_enabled is False
-    assert loaded.opencode_auto_run is False
-    assert loaded.opencode_project == ""
-    assert loaded.opencode_allowed_dirs == []
-    assert loaded.opencode_model == ""
+    assert loaded.pi_enabled is False
+    assert loaded.pi_auto_run is False
+    assert loaded.pi_project == ""
+    assert loaded.pi_allowed_dirs == []
+    assert loaded.pi_provider == ""
+    assert loaded.pi_model == ""
 
 
-def test_opencode_settings_round_trip_and_normalise(tmp_path: Path) -> None:
+def test_pi_settings_round_trip_and_normalise(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path / "config.json")
     store.save(
         Settings(
-            opencode_enabled=True,
-            opencode_auto_run=True,
-            opencode_project="  /home/user/project  ",
-            opencode_allowed_dirs=[" /home/user ", "", " /home/user ", "/opt/projects"],
-            opencode_model=" anthropic/claude-4.5 ",
+            pi_enabled=True,
+            pi_auto_run=True,
+            pi_project="  /home/user/project  ",
+            pi_allowed_dirs=[" /home/user ", "", " /home/user ", "/opt/projects"],
+            pi_provider=" ollama ",
+            pi_model=" anthropic/claude-4.5 ",
         )
     )
     loaded = store.load()
 
-    assert loaded.opencode_enabled is True
-    assert loaded.opencode_auto_run is True
-    assert loaded.opencode_project == "/home/user/project"
-    assert loaded.opencode_allowed_dirs == ["/home/user", "/opt/projects"]
-    assert loaded.opencode_model == "anthropic/claude-4.5"
+    assert loaded.pi_enabled is True
+    assert loaded.pi_auto_run is True
+    assert loaded.pi_project == "/home/user/project"
+    assert loaded.pi_allowed_dirs == ["/home/user", "/opt/projects"]
+    assert loaded.pi_provider == "ollama"
+    assert loaded.pi_model == "anthropic/claude-4.5"
+
+
+def test_continuation_settings_migrate_from_the_earlier_names(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "opencode_enabled": True,
+                "opencode_auto_run": True,
+                "opencode_project": "/home/user/project",
+                "opencode_allowed_dirs": ["/home/user"],
+                "opencode_model": "ollama/qwen3:8b",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = ConfigStore(path).load()
+
+    assert loaded.pi_enabled is True
+    assert loaded.pi_auto_run is True
+    assert loaded.pi_project == "/home/user/project"
+    assert loaded.pi_allowed_dirs == ["/home/user"]
+    assert loaded.pi_model == "ollama/qwen3:8b"
+
+
+def test_new_continuation_keys_win_over_the_old_ones(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "opencode_enabled": True,
+                "opencode_project": "/old",
+                "pi_enabled": False,
+                "pi_project": "/new",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = ConfigStore(path).load()
+
+    assert loaded.pi_enabled is False
+    assert loaded.pi_project == "/new"

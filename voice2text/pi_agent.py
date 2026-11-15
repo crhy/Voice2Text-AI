@@ -1,29 +1,35 @@
 # SPDX-License-Identifier: MIT
-"""Supervised hand-off to the OpenCode CLI, kept inside an explicit allowlist.
+"""Supervised hand-off to the pi coding agent, kept inside an explicit allowlist.
 
-OpenCode is a general-purpose coding agent: pointed at a project it can edit
-files, run tests and reach the network. "Let the project keep moving without
-the user" therefore has to be built as a set of boundaries rather than as one
-big feature, and this module is the first slice of it:
+pi is a general-purpose coding agent: pointed at a project it can read, edit and
+execute with the permissions of the account that started it, and it does not
+ask before every tool call. "Let the project keep moving without the user"
+therefore has to be built as a set of boundaries rather than as one big feature,
+and this module is the first slice of it:
 
 * **Read-only first.** ``read_only_status`` only ever runs git inspection
   commands, and ``suggested_next_actions`` turns that into plain text. Nothing
   here writes to a project.
 * **An explicit allowlist.** Every path that reaches a subprocess is resolved
   (symlinks and ``..`` collapsed) and must sit inside one of the user's
-  ``opencode_allowed_dirs``. An empty allowlist means nothing may run at all.
-* **No silent permission growth.** ``--auto`` is the CLI's own
-  "auto-approve permissions that are not explicitly denied (dangerous!)"
-  switch. It is never emitted, and ``run_continuation`` refuses an argv that
-  contains it, so a caller cannot smuggle it in.
+  ``pi_allowed_dirs``. An empty allowlist means nothing may run at all.
+* **No silent permission growth.** pi's ``--approve`` ("trust project-local
+  files for this run") is never emitted, ``run_continuation`` refuses an argv
+  that contains it, and ``--no-approve`` is emitted instead so a project folder
+  cannot load extensions or settings behind the user's back — not even if the
+  user's global ``defaultProjectTrust`` says "always".
 * **Pause / kill / audit / checkpoint.** A run honours a stop event, is
   time-bounded, appends one line to an append-only audit log, and records a
-  checkpoint (plus the session id, so a later run can continue the same
-  session with ``-s``).
+  checkpoint (plus the session id, so a later run can resume the same pi
+  session with ``--session``).
+
+This module replaces the OpenCode experiment of the same feature (settings
+keys and plan/audit files from that era are migrated once, see
+``_migrate_legacy``); pi is the harness this app targets.
 
 Still deliberately absent, per the issue's ordering: supervised edits/tests
 run on the user's behalf, resumable unattended work in a sandbox, and
-recovery-after-crash proof. See docs/OPENCODE.md.
+recovery-after-crash proof. See docs/PI_AGENT.md.
 
 No GTK here: everything is pure or ``subprocess`` so it can be tested offline.
 """
@@ -32,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -41,17 +48,31 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-AUTO_FLAG = "--auto"
+# The command shape this app emits, fixed by ``pi --help``:
+# ``pi -p --no-session --offline --mode json "<prompt>"`` with the model
+# chosen by ``--provider <name> --model <id>``. Resuming a session swaps
+# ``--no-session`` for ``--session <id>``.
+BASE_ARGS = ("-p", "--no-session", "--offline", "--mode", "json")
+END_OF_OPTIONS = "--"
+# pi's own "trust project-local files for this run" switch and its short form.
+# Emitting it would let a project folder load extensions and settings without
+# the user deciding, so it is refused; ``--no-approve`` is emitted instead.
+APPROVE_FLAGS = ("--approve", "-a")
+NO_APPROVE_FLAG = "--no-approve"
 DEFAULT_TIMEOUT_SECONDS = 300.0
-PLAN_FILENAME = "opencode-plan.json"
-AUDIT_FILENAME = "opencode-audit.log"
-# The CLI's own help fixes the contract this code emits:
-# ``opencode run [message..]``, ``--dir <path>``, ``-m provider/model``,
-# ``-s <session id>``, ``--format default|json``.
-RUN_SUBCOMMAND = "run"
+PLAN_FILENAME = "pi-plan.json"
+AUDIT_FILENAME = "pi-audit.log"
+# Names used by the earlier OpenCode-based slice of this same feature. Read
+# once and carried over so existing settings and history are not lost.
+LEGACY_PLAN_FILENAME = "opencode-plan.json"
+LEGACY_AUDIT_FILENAME = "opencode-audit.log"
+# pi accepts a session file path or a (partial) UUID for --session. Only a
+# plain id that cannot look like an option is ever emitted here: no path
+# separators, no leading dash.
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
-class OpenCodeError(RuntimeError):
+class PiAgentError(RuntimeError):
     """Raised when a continuation cannot be started, or failed while running."""
 
 
@@ -71,7 +92,7 @@ class ProjectStatus:
 
 @dataclass(slots=True, frozen=True)
 class RunResult:
-    """One OpenCode run: what it printed, how it ended, and its session id."""
+    """One pi run: what it printed, how it ended, and its session id."""
 
     stdout: str = ""
     stderr: str = ""
@@ -82,16 +103,19 @@ class RunResult:
 
 
 def find_binary() -> str | None:
-    """Locate the OpenCode CLI, PATH first then the installer's own directory."""
-    found = shutil.which("opencode")
+    """Locate the pi CLI, PATH first then the locations pipx/user installs use."""
+    found = shutil.which("pi")
     if found:
         return found
-    candidate = Path.home() / ".opencode" / "bin" / "opencode"
-    try:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    except OSError:
-        return None
+    for candidate in (
+        Path.home() / ".local" / "bin" / "pi",
+        Path.home() / ".pi" / "bin" / "pi",
+    ):
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        except OSError:
+            continue
     return None
 
 
@@ -242,13 +266,14 @@ def suggested_next_actions(status: ProjectStatus, transcript: str = "") -> list[
         lines.append(f"Next action from your transcript: {intent}")
     else:
         lines.append(
-            "Next action: say or type the change you want, then press Continue "
+            "Next action: say or type the change you want, then press pi "
             "to run it with your approval."
         )
 
     lines.append(
-        "Edits, tests and anything that leaves this machine need your approval: "
-        "this app never auto-approves permissions."
+        "pi does not ask before each tool call, so this app only ever runs it "
+        "inside the directories you allow and never trusts project-local files: "
+        "review what it did before it leaves your machine."
     )
     return lines
 
@@ -256,37 +281,49 @@ def suggested_next_actions(status: ProjectStatus, transcript: str = "") -> list[
 def continuation_argv(
     message: str,
     *,
-    project: str = "",
+    provider: str = "",
     model: str = "",
     session: str = "",
     binary: str | None = None,
-    capture_session: bool = True,
 ) -> list[str]:
     """Build the argv for one supervised continuation run.
 
-    Only flags the CLI documents are used, and only when a value is set, so
-    the command stays minimal and reviewable. ``--format json`` is added when
-    the session id has to be captured for a later ``-s`` continuation; ``--auto``
-    is never added.
+    Only flags pi documents are used, and only when a value is set, so the
+    command stays minimal and reviewable. The run is ephemeral (``--no-session``)
+    unless a session id is handed back explicitly, in which case pi resumes that
+    session with ``--session`` instead. ``--no-approve`` is always emitted and
+    ``--approve`` never is. pi has no ``--dir``: the working directory set by
+    ``run_continuation`` is what places the run inside the allowed project.
     """
-    resolved_binary = binary or find_binary() or "opencode"
-    argv = [resolved_binary, RUN_SUBCOMMAND, message]
-    if project:
-        argv += ["--dir", project]
-    if model:
-        argv += ["-m", model]
+    resolved_binary = binary or find_binary() or "pi"
     if session:
-        argv += ["-s", session]
-    if capture_session:
-        argv += ["--format", "json"]
-    return argv
+        if not _SESSION_ID_RE.fullmatch(session):
+            raise PiAgentError(
+                "Refusing to resume: the session id is not a plain id, so it "
+                "could name a path or an option."
+            )
+        argv = [resolved_binary, "-p", "--offline", "--mode", "json", "--session", session]
+    else:
+        argv = [resolved_binary, *BASE_ARGS]
+    argv += [NO_APPROVE_FLAG]
+    if provider:
+        argv += ["--provider", provider]
+    if model:
+        argv += ["--model", model]
+    # ``--`` keeps a transcript that starts with a dash from being read as a flag.
+    return [*argv, END_OF_OPTIONS, message]
 
 
 def _events(stdout: str) -> list[dict]:
-    """Parse the JSON event lines ``--format json`` produces."""
+    """Parse the JSONL records pi writes to stdout.
+
+    One JSON object per LF-terminated line. Anything that is not such an
+    object is ignored: the event vocabulary grows, and an unknown event must
+    never break a run that finished.
+    """
     events: list[dict] = []
     for line in stdout.splitlines():
-        line = line.strip()
+        line = line.strip().rstrip("\r")
         if not line:
             continue
         try:
@@ -299,12 +336,17 @@ def _events(stdout: str) -> list[dict]:
 
 
 def parse_session_id(stdout: str) -> str:
-    """Recover the session id of a run so a later run can continue it with ``-s``.
+    """Recover the session id of a run so a later run can resume it with ``--session``.
 
-    The CLI's JSON event shape is not stable across versions, so any session
-    identifier found in the events is accepted rather than one exact key.
+    The first JSON-mode record is pi's session header (``{"type":"session",
+    "id":...}``), but the event shape is not guaranteed across versions, so any
+    session identifier found in the events is accepted rather than one exact key.
     """
     for event in _events(stdout):
+        if event.get("type") == "session":
+            value = event.get("id")
+            if isinstance(value, str) and value:
+                return value
         for key in ("sessionID", "session_id", "sessionId"):
             value = event.get(key)
             if isinstance(value, str) and value:
@@ -318,26 +360,100 @@ def parse_session_id(stdout: str) -> str:
     return ""
 
 
+def _message_text(message: dict) -> str:
+    """Plain text of one message record: a string, or text blocks only.
+
+    Thinking/reasoning blocks are skipped on purpose — the response pane shows
+    what pi concluded, not its internal deliberation.
+    """
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
+
+
 def parse_reply_text(stdout: str) -> str:
     """Best-effort plain text of a run's reply, for the AI response pane.
 
-    Falls back to the raw output when no text event is recognised, so the
-    user always sees what actually happened rather than a blank pane.
+    The authoritative value is the text of the *final* assistant message
+    (``message_end``, or ``turn_end`` for versions that only emit that).
+    Streaming deltas and ``agent_end`` are accepted as fallbacks, and the raw
+    output is returned when nothing is recognised, so the user always sees
+    what actually happened rather than a blank pane.
     """
-    parts: list[str] = []
-    for event in _events(stdout):
+    events = _events(stdout)
+
+    final = ""
+    for event in events:
+        if event.get("type") not in ("message_end", "turn_end"):
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        text = _message_text(message).strip()
+        if text:
+            final = text
+    if final:
+        return final
+
+    # A run killed mid-stream still has its deltas.
+    deltas: list[str] = []
+    for event in events:
+        if event.get("type") != "message_update":
+            continue
+        nested = event.get("assistantMessageEvent")
+        if isinstance(nested, dict) and nested.get("type") == "text_delta":
+            delta = nested.get("delta")
+            if isinstance(delta, str):
+                deltas.append(delta)
+    text = "".join(deltas).strip()
+    if text:
+        return text
+
+    for event in events:
+        if event.get("type") != "agent_end":
+            continue
+        messages = event.get("messages")
+        if not isinstance(messages, list):
+            continue
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                text = _message_text(message).strip()
+                if text:
+                    return text
+
+    for event in events:
         for key in ("text", "content", "response"):
             value = event.get(key)
             if isinstance(value, str) and value.strip():
-                parts.append(value.strip())
-    text = "\n".join(parts).strip()
-    return text if text else stdout.strip()
+                return value.strip()
+
+    return stdout.strip()
 
 
-def _contains_auto(argv: Sequence[str]) -> bool:
-    return any(
-        str(arg) == AUTO_FLAG or str(arg).startswith(f"{AUTO_FLAG}=") for arg in argv
-    )
+def _contains_approve(argv: Sequence[str]) -> str:
+    """Return the offending flag when an argv asks pi to trust project files.
+
+    Only the arguments before ``--`` are flags; anything after it is the
+    message, where such a word is inert text rather than a switch.
+    """
+    for arg in argv:
+        text = str(arg)
+        if text == END_OF_OPTIONS:
+            break
+        if text in APPROVE_FLAGS or text.startswith("--approve="):
+            return text
+    return ""
 
 
 def run_continuation(
@@ -350,26 +466,32 @@ def run_continuation(
 ) -> RunResult:
     """Run one continuation inside the allowlist, killable and time-bounded.
 
-    Every guard runs *before* the subprocess starts: no OpenCode binary means a
-    clear failure instead of a mysterious one, an argv carrying ``--auto`` is
-    refused, and ``cwd`` must be an allowed project directory. The kill switch
-    is polled while the child runs, so pausing really terminates it.
+    Every guard runs *before* the subprocess starts: no pi binary means a
+    clear failure instead of a mysterious one, an argv carrying ``--approve``
+    is refused, and ``cwd`` must be an allowed project directory. The kill
+    switch is polled while the child runs, so pausing really terminates it.
     """
     if find_binary() is None:
-        raise OpenCodeError(
-            "OpenCode is not installed: 'opencode' is not on PATH and "
-            "~/.opencode/bin/opencode is missing."
+        raise PiAgentError(
+            "pi is not installed: 'pi' is not on PATH and neither "
+            "~/.local/bin/pi nor ~/.pi/bin/pi is present."
         )
-    if _contains_auto(argv):
-        raise OpenCodeError(f"Refusing to run: {AUTO_FLAG} would auto-approve permissions.")
+    flag = _contains_approve(argv)
+    if flag:
+        raise PiAgentError(
+            f"Refusing to run: {flag} would trust project-local files without asking."
+        )
     if not project_allowed(cwd, allowed_dirs):
-        raise OpenCodeError(
+        raise PiAgentError(
             f"Refusing to run in {cwd}: it is not inside an allowed project directory."
         )
 
     command = [str(part) for part in argv]
-    if _contains_auto(command):
-        raise OpenCodeError(f"Refusing to run: {AUTO_FLAG} would auto-approve permissions.")
+    smuggled = _contains_approve(command)
+    if smuggled:
+        raise PiAgentError(
+            f"Refusing to run: {smuggled} would trust project-local files without asking."
+        )
 
     kill = stop_event or threading.Event()
     try:
@@ -381,7 +503,7 @@ def run_continuation(
             text=True,
         )
     except (OSError, ValueError) as exc:
-        raise OpenCodeError(f"Could not start OpenCode: {exc}") from exc
+        raise PiAgentError(f"Could not start pi: {exc}") from exc
 
     stopped = False
     timed_out = False
@@ -419,7 +541,7 @@ def run_continuation(
         process.kill()
         stdout, stderr = process.communicate()
     except OSError as exc:
-        raise OpenCodeError(f"Could not read OpenCode output: {exc}") from exc
+        raise PiAgentError(f"Could not read pi output: {exc}") from exc
 
     returncode = process.returncode if process.returncode is not None else -1
     return RunResult(
@@ -445,8 +567,25 @@ class PlanStore:
             base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
             path = base / "voice2text-ai" / PLAN_FILENAME
         self.path = path
+        self.legacy_path = path.parent / LEGACY_PLAN_FILENAME
+
+    def _migrate_legacy(self) -> None:
+        """Carry the plan written by the OpenCode-era slice over to the new name.
+
+        One-time and non-destructive: the old file is left in place, and the
+        new file wins as soon as it exists.
+        """
+        if self.path.exists() or not self.legacy_path.exists():
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_bytes(self.legacy_path.read_bytes())
+        except OSError:
+            # Migration is best-effort; load() falls back to defaults.
+            return
 
     def load(self) -> dict:
+        self._migrate_legacy()
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -533,9 +672,25 @@ class AuditLog:
             base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
             path = base / "voice2text-ai" / AUDIT_FILENAME
         self.path = path
+        self.legacy_path = path.parent / LEGACY_AUDIT_FILENAME
+
+    def _migrate_legacy(self) -> None:
+        """Keep the history written under the OpenCode-era name readable.
+
+        Copied once into the new file, which is what every later append uses;
+        the old file is never modified or removed.
+        """
+        if self.path.exists() or not self.legacy_path.exists():
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_bytes(self.legacy_path.read_bytes())
+        except OSError:
+            return
 
     def record(self, event: str, *, argv: Sequence[str] = (), detail: str = "") -> str:
         """Append one line and return it."""
+        self._migrate_legacy()
         line = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {event}"
         if argv:
             line += f" argv={_redact(argv)}"
@@ -548,6 +703,7 @@ class AuditLog:
 
     def read(self, limit: int = 50) -> list[str]:
         """Newest lines, for the status view."""
+        self._migrate_legacy()
         try:
             lines = self.path.read_text(encoding="utf-8").splitlines()
         except (FileNotFoundError, OSError):
@@ -560,19 +716,19 @@ def _redact(argv: Sequence[str]) -> str:
 
     The message is the user's own words (often the transcript); the audit log
     only needs to show that a message of roughly that size was sent. Flags and
-    paths stay readable, because those are exactly what needs auditing.
+    paths stay readable, because those are exactly what needs auditing. The
+    message is whatever follows ``--``, which is where this app puts it.
     """
-    message_index = -1
-    for index, arg in enumerate(argv):
-        if str(arg) == RUN_SUBCOMMAND:
-            message_index = index + 1
-            break
     parts: list[str] = []
-    for index, arg in enumerate(argv):
-        if index == message_index:
-            parts.append(f"<message:{len(str(arg))} chars>")
+    redacting = False
+    for arg in argv:
+        text = str(arg)
+        if text == END_OF_OPTIONS:
+            redacting = True
+            parts.append(text)
+            continue
+        if redacting:
+            parts.append(f"<message:{len(text)} chars>")
         else:
-            parts.append(shlex.quote(str(arg)))
+            parts.append(shlex.quote(text))
     return " ".join(parts)
-
-
