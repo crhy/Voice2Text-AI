@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from .platform_support import audio_backends, os_release_search_paths, read_os_release
+
 Gst: Any = None  # Initialized lazily so importing this module needs no GStreamer or PyGObject.
 
 
@@ -120,6 +122,18 @@ class AudioCapture:
         if selected is not None:
             source = selected.device.create_element(None)
         else:
+            # autoaudiosrc picks a backend silently, so on a host with no audio
+            # backend at all the user would just see an empty microphone list. Say
+            # which distribution was detected and what was found before falling
+            # back to it.
+            if not audio_backends().any_backend:
+                distribution = read_os_release(os_release_search_paths())
+                host = distribution.label or "a machine that reported no distribution in os-release"
+                raise RuntimeError(
+                    f"{host} exposes no audio backend (no PipeWire, no PulseAudio and no "
+                    "ALSA devices), so Voice2Text AI cannot capture your voice here. "
+                    "See docs/PLATFORM-SUPPORT.md for what this platform would need."
+                )
             source = gst.ElementFactory.make("autoaudiosrc")
         convert = gst.ElementFactory.make("audioconvert")
         resample = gst.ElementFactory.make("audioresample")

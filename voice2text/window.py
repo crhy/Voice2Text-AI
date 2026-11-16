@@ -19,6 +19,7 @@ from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
 from .ollama import OllamaClient, OllamaError, strip_reasoning  # noqa: E402
+from .platform_support import audio_backends, classify, os_release_search_paths, read_os_release, support_sentence  # noqa: E402
 from .speech import SpeechService  # noqa: E402
 from .transcription import WhisperService  # noqa: E402
 
@@ -124,6 +125,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._latest_level = 0.0
         self._query_generation = 0
         self._hardware_summary = "Detecting your hardware…"
+        self._platform_summary = "Detecting your platform…"
         self._suggested_models: list[str] = []
         self._install_cancel = threading.Event()
         self._installing = False
@@ -443,6 +445,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._suggested_models = [model.name for model in suggestions]
         names = ", ".join(self._suggested_models)
         self._hardware_summary = f"Suggested for this machine (~{available_gb:.0f} GB {source}): {names}"
+        # Name the platform the app is really on, and how far support reaches
+        # there, instead of implying the Flatpak baseline covers everything.
+        self._platform_summary = support_sentence(
+            classify(read_os_release(os_release_search_paths()), audio_backends())
+        )
         self._has_gpu = source == "GPU VRAM"
         # Keep the gauge live for the app's lifetime once a GPU is detected,
         # not only while an Ollama query is in flight.
@@ -1452,7 +1459,10 @@ class MainWindow(Adw.ApplicationWindow):
         ai_group = Adw.PreferencesGroup()
         ai_page.add(ai_group)
         model_names = self.ollama_models or ["No models found"]
-        ai_row = Adw.ComboRow(title="Ollama model", subtitle=self._hardware_summary)
+        ai_row = Adw.ComboRow(
+            title="Ollama model",
+            subtitle=f"{self._hardware_summary}\n{self._platform_summary}",
+        )
         ai_row.set_model(Gtk.StringList.new(model_names))
         if self.settings.ollama_model in model_names:
             ai_row.set_selected(model_names.index(self.settings.ollama_model))

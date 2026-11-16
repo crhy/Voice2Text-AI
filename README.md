@@ -5,8 +5,10 @@ speech transcribed on-device with Faster Whisper, prompt a local Ollama model,
 and hear the answer spoken back with a natural neural voice and an offline
 eSpeak NG fallback.
 
-Built with GTK 4 and libadwaita, powered by GStreamer, and distributed as a
-Flatpak. Works on Wayland and X11 with PipeWire or PulseAudio.
+Built with GTK 4 and libadwaita, powered by GStreamer, and distributed as a Flatpak. The
+baseline is Linux-only: [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) carries the supported
+distribution matrix and what is not supported yet. The application names the distribution it is
+actually running on and reports its own support level in Preferences rather than assuming parity.
 
 ![Voice2Text AI 0.4 main window](docs/screenshots/v0.4.0-main.png)
 
@@ -116,6 +118,10 @@ from the Preferences dialog.
 Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).
+
+Platform support is documented in [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md): the supported
+Linux distribution matrix, what an unlisted Linux desktop must provide, and the feature/support table
+for Windows, macOS and Android.
 
 ## Acknowledgements
 
