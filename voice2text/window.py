@@ -11,6 +11,18 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from .actions import (  # noqa: E402
+    Action,
+    AppInstall,
+    actions_for,
+    allowed,
+    available_apps,
+    availability_text,
+    describe,
+    granted,
+    grant,
+    granted_text,
+)
 from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refresh_due  # noqa: E402
 from .config import ConfigStore  # noqa: E402
@@ -130,12 +142,17 @@ class MainWindow(Adw.ApplicationWindow):
         self._has_gpu = False
         self._gpu_poll_stop: threading.Event | None = None
         self._model_combo_updating = False
+        # Part 6 of issue #23: which registry apps are installed, and which
+        # desktop actions the user has actually granted. Nothing is ever run
+        # here; the status strip only reports the state.
+        self._available_apps: list[AppInstall] = []
 
         self._build_ui()
         self._install_actions()
         self._refresh_devices()
         self._refresh_ollama_models()
         self._detect_hardware_async()
+        self._refresh_available_apps()
         self._load_whisper(self.settings.whisper_model)
         self._load_wake_whisper()
 
@@ -222,10 +239,29 @@ class MainWindow(Adw.ApplicationWindow):
         self.model_combo.set_tooltip_text("Ollama model used by Ask AI")
         self.model_combo.connect("notify::selected", self._on_model_selected)
 
+        self.apps_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.apps_box.set_visible(False)
+        apps_caption = Gtk.Label(label="Apps")
+        apps_caption.add_css_class("dim-label")
+        self.apps_label = Gtk.Label(label="")
+        self.apps_label.set_width_chars(26)
+        self.apps_label.set_max_width_chars(60)
+        self.apps_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.apps_button = Gtk.Button(label="Confirm…")
+        self.apps_button.add_css_class("flat")
+        self.apps_button.set_tooltip_text(
+            "Ask about one desktop action at a time before it is ever allowed"
+        )
+        self.apps_button.connect("clicked", self._offer_next_action)
+        self.apps_box.append(apps_caption)
+        self.apps_box.append(self.apps_label)
+        self.apps_box.append(self.apps_button)
+
         self.status_box.append(self.status_spinner)
         self.status_box.append(self.status_label)
         self.status_box.append(self.gpu_box)
         self.status_box.append(self.model_combo)
+        self.status_box.append(self.apps_box)
         self.status_box.append(self.level)
         root.append(self.status_box)
         self._install_status_css()
@@ -522,6 +558,97 @@ class MainWindow(Adw.ApplicationWindow):
             self.settings.ollama_model = model
             self.config_store.save(self.settings)
             self._set_status(f"Asking with {model} from now on.")
+
+    def _refresh_available_apps(self) -> None:
+        # Reading Flatpak metadata and .desktop files is a subprocess plus a
+        # handful of stat calls, so it runs off the UI thread like the other
+        # launch-time probes. Nothing is launched, installed or configured.
+        threading.Thread(target=self._scan_apps, name="apps-scan", daemon=True).start()
+
+    def _scan_apps(self) -> None:
+        apps = available_apps()
+        idle(self._apply_apps, apps)
+
+    def _apply_apps(self, apps: list[AppInstall]) -> bool:
+        if self.is_destroyed():
+            return False
+        self._available_apps = apps
+        self.apps_box.set_visible(bool(apps))
+        self._refresh_actions_status()
+        return False
+
+    def _pending_actions(self) -> list[Action]:
+        # Registry actions belonging to an app that is actually installed and
+        # that the user has not named yet. Unknown ids never reach this list.
+        pending: list[Action] = []
+        for app in self._available_apps:
+            for action in actions_for(app.app_id):
+                if granted(self.settings, action.action_id) is None:
+                    pending.append(action)
+        return pending
+
+    def _actions_summary(self) -> str:
+        return f"{availability_text(self._available_apps)} - {granted_text(self.settings)}"
+
+    def _actions_tooltip(self) -> str:
+        lines = [
+            f"Apps: {availability_text(self._available_apps)}",
+            f"Allowed: {granted_text(self.settings)}",
+        ]
+        for action in allowed(self.settings):
+            lines.append(describe(action))
+        pending = self._pending_actions()
+        if pending:
+            lines.append(f"{len(pending)} action(s) are still denied; Confirm… asks about one.")
+        else:
+            lines.append("No desktop action is waiting for a decision.")
+        return "\n".join(lines)
+
+    def _refresh_actions_status(self) -> None:
+        self.apps_label.set_text(self._actions_summary())
+        self.apps_box.set_tooltip_text(self._actions_tooltip())
+
+    def _offer_next_action(self, *_args) -> None:
+        pending = self._pending_actions()
+        if not pending:
+            self._toast("No desktop action is waiting for a decision.")
+            return
+        self._confirm_action(pending[0])
+
+    def _confirm_action(self, action: Action) -> None:
+        # Same shape as _confirm_delete_model: a destructive action is only ever
+        # named in the settings after the user has been shown what it does and
+        # what it would need. Granting it does not run anything.
+        confirm = Adw.AlertDialog(
+            heading=f"{action.title}?",
+            body=f"{action.detail}\n\nThis would need: {action.permission}",
+        )
+        confirm.add_response("cancel", "Keep it denied")
+        confirm.add_response("allow", "Allow it")
+        confirm.set_response_appearance(
+            "allow",
+            Adw.ResponseAppearance.DESTRUCTIVE
+            if action.destructive
+            else Adw.ResponseAppearance.SUGGESTED,
+        )
+        confirm.set_default_response("cancel")
+        confirm.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            if response != "allow":
+                # The status strip keeps showing what is granted; a toast says
+                # the answer was "no" without overwriting the dictation status.
+                self._toast(f"{action.title} stays denied.")
+                return
+            if not grant(self.settings, action.action_id):
+                self._toast(f"{action.action_id} is not in this build's registry.")
+                return
+            self.config_store.save(self.settings)
+            self._refresh_actions_status()
+            self._toast(f"{action.title} is allowed. Nothing runs until the tools layer exists.")
+
+        confirm.connect("response", on_response)
+        confirm.present(self)
 
     @staticmethod
     def _scroll_to_end(view: Gtk.TextView) -> None:

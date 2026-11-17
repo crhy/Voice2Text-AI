@@ -113,6 +113,12 @@ flatpak-builder --user --install --force-clean build-dir io.github.crhy.voice2te
 Settings are stored in `$XDG_CONFIG_HOME/voice2text-ai/config.json` and edited
 from the Preferences dialog.
 
+The status strip also shows which of the four desktop apps Voice2Text AI knows
+about (GIMP, Blender, FreeCAD, LibreOffice) are installed, and which desktop
+actions you have allowed. Nothing is allowed by default: an action has to be
+named by id, and one that would replace an existing file is confirmed first.
+Voice2Text AI never starts those apps by itself.
+
 Backups and restores are covered by the `v2t-backup` CLI, which archives
 settings, Ollama model manifests and optional model weights into a
 GPG/AES-256 encrypted archive; see [docs/BACKUP.md](docs/BACKUP.md).

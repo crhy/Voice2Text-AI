@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
+
+from .actions import normalize_ids
 
 
 @dataclass(slots=True)
@@ -24,6 +26,10 @@ class Settings:
     voice_threshold: int = 450
     max_segment_seconds: float = 6.0
     wake_word: str = "computer"
+    # Desktop actions the user has named by id (see voice2text/actions.py).
+    # Empty means nothing is allowed: the registry is deny-by-default, and an
+    # id it does not recognise is never accepted.
+    allowed_actions: list[str] = field(default_factory=list)
 
     def normalized(self) -> Settings:
         self.tts_rate = max(80, min(350, int(self.tts_rate)))
@@ -36,6 +42,10 @@ class Settings:
         self.ollama_url = self.ollama_url.rstrip("/") or "http://127.0.0.1:11434"
         self.language = (self.language or "en").strip()[:16]
         self.wake_word = (self.wake_word or "computer").strip()[:32] or "computer"
+        # Drop ids this build's registry does not know, dedupe, sort: an old
+        # config.json without the key still loads, and a hand-edited one cannot
+        # smuggle in an action that does not exist.
+        self.allowed_actions = normalize_ids(self.allowed_actions)
         return self
 
 
