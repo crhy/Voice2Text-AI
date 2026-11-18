@@ -33,6 +33,29 @@ def test_list_models_detailed_returns_sizes_sorted_by_name() -> None:
     assert [(info.name, info.size_bytes) for info in infos] == [("alpha", 1000), ("zeta", 2000)]
 
 
+def test_list_models_ignores_non_string_names() -> None:
+    response = FakeResponse(b'{"models":[{"name":7},{"name":"valid"},{"size":1}]}')
+    with patch("urllib.request.urlopen", return_value=response):
+        assert OllamaClient().list_models() == ["valid"]
+
+
+def test_list_models_detailed_tolerates_invalid_sizes() -> None:
+    response = FakeResponse(
+        b'{"models":['
+        b'{"name":"broken","size":"unknown"},'
+        b'{"name":"negative","size":-2},'
+        b'{"name":"valid","size":"12"}'
+        b']}'
+    )
+    with patch("urllib.request.urlopen", return_value=response):
+        infos = OllamaClient().list_models_detailed()
+    assert [(info.name, info.size_bytes) for info in infos] == [
+        ("broken", 0),
+        ("negative", 0),
+        ("valid", 12),
+    ]
+
+
 def test_pull_model_reports_progress_and_stops_on_success() -> None:
     response = FakeResponse(
         b'{"status":"pulling manifest"}\n'

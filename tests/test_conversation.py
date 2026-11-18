@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Callable
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from voxa.conversation import (
     ConversationController,
     detect_exit_phrase,
+    finalize_conversation_turn,
     strip_wake_word,
 )
 
@@ -68,6 +70,34 @@ def test_detect_exit_phrase_requires_exact_utterance() -> None:
     assert detect_exit_phrase("goodbye everyone") is None
 
 
+def test_finalize_conversation_turn_preserves_user_and_adds_assistant() -> None:
+    history = deque(
+        [
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Hello"},
+        ]
+    )
+
+    assert finalize_conversation_turn(history, "Hi there.") is True
+    assert list(history) == [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there."},
+    ]
+
+
+def test_finalize_conversation_turn_discards_unanswered_user_message() -> None:
+    history = deque(
+        [
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Hello"},
+        ]
+    )
+
+    assert finalize_conversation_turn(history, "") is False
+    assert list(history) == [{"role": "system", "content": "Be brief."}]
+
+
 # ConversationController drives the same pause segmentation as dictation, so
 # controller tests feed real chunks and let the 0.25 s queue.get timeout in
 # segment_stream advance time (mirroring tests/test_dictation.py).
@@ -126,6 +156,7 @@ def make_controller(
     prompt: FakeWhisper,
     wake_word: str = "voxa",
     prompt_timeout: float | None = None,
+    idle_status: str = "Awaiting orders…",
 ) -> tuple[ConversationController, _Events]:
     events = _Events()
     controller = ConversationController(
@@ -141,6 +172,7 @@ def make_controller(
         on_status=events.on_status,
         on_error=events.on_error,
         on_exit=events.on_exit,
+        idle_status=idle_status,
     )
     if prompt_timeout is not None:
         controller.PROMPT_TIMEOUT_SECONDS = prompt_timeout
@@ -445,3 +477,36 @@ def test_wake_model_error_while_muted_is_reported_and_worker_survives(run_contro
     assert wait_for(lambda: events.woken == 1)
     assert wait_for(lambda: not controller.muted)
     assert controller._wake_thread is not None and controller._wake_thread.is_alive()
+
+
+def test_empty_transcript_resets_to_idle_status(run_controller):
+    # Room noise transcribed to nothing must not leave "Transcribing…" stuck.
+    wake = FakeWhisper([""])
+    prompt = FakeWhisper()
+    controller, events = make_controller(wake, prompt)
+    run_controller(controller)
+    feed_speech(controller)
+    assert wait_for(lambda: events.statuses and events.statuses[-1] == "Awaiting orders…")
+    assert events.prompts == [] and events.woken == 0
+    assert controller.thread is not None and controller.thread.is_alive()
+
+
+def test_utterance_without_wake_word_resets_to_idle_status(run_controller):
+    # Heard speech with no wake word is nobody talking to us: back to idle.
+    wake = FakeWhisper(["what time is it"])
+    prompt = FakeWhisper()
+    controller, events = make_controller(wake, prompt)
+    run_controller(controller)
+    feed_speech(controller)
+    assert wait_for(lambda: "Awaiting orders…" in events.statuses)
+    assert events.prompts == [] and events.woken == 0
+    assert controller.thread is not None and controller.thread.is_alive()
+
+
+def test_custom_idle_status_is_used(run_controller):
+    wake = FakeWhisper([""])
+    prompt = FakeWhisper()
+    controller, events = make_controller(wake, prompt, idle_status="Stand by…")
+    run_controller(controller)
+    feed_speech(controller)
+    assert wait_for(lambda: events.statuses and events.statuses[-1] == "Stand by…")
