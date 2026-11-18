@@ -6,7 +6,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
-from . import APP_ID, APP_NAME, APP_VERSION  # noqa: E402
+from . import APP_DISPLAY_NAME, APP_DISPLAY_VERSION, APP_ID  # noqa: E402
 from .window import MainWindow  # noqa: E402
 
 
@@ -30,10 +30,10 @@ class VoxaApplication(Adw.Application):
 
     def _show_about(self, *_args) -> None:
         about = Adw.AboutDialog(
-            application_name=APP_NAME,
+            application_name=APP_DISPLAY_NAME,
             application_icon=APP_ID,
             developer_name="crhy",
-            version=APP_VERSION,
+            version=APP_DISPLAY_VERSION,
             website="https://github.com/crhy/voxa",
             issue_url="https://github.com/crhy/voxa/issues",
             license_type=Gtk.License.MIT_X11,

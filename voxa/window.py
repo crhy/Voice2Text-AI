@@ -11,10 +11,11 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from . import APP_DISPLAY_NAME  # noqa: E402
 from .audio import AudioCapture, AudioDevice  # noqa: E402
 from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refresh_due  # noqa: E402
 from .config import ConfigStore  # noqa: E402
-from .conversation import ConversationController  # noqa: E402
+from .conversation import ConversationController, finalize_conversation_turn  # noqa: E402
 from .dictation import DictationController  # noqa: E402
 from .hardware import GpuUsage, detect_available_model_memory_gb, sample_gpu_usage, suggest_models  # noqa: E402
 from .installer import InstallerError, install_ollama  # noqa: E402
@@ -92,7 +93,7 @@ def string_item_factory(*, wrap: bool, width_chars: int) -> Gtk.SignalListItemFa
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application)
-        self.set_title("Voxa")
+        self.set_title(APP_DISPLAY_NAME)
         self.set_default_size(1200, 760)
         self.set_size_request(850, 600)
 
@@ -193,6 +194,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_shell_active(self) -> None:
         """ACTIVE button: leave OFFLINE and enter wake-word conversation mode."""
+        self._activate_conversation()
+
+    def _activate_conversation(self) -> None:
+        """Start conversation mode and restore OFFLINE if startup fails."""
         if self.conversation_active:
             return
         self._offline = False
@@ -206,7 +211,10 @@ class MainWindow(Adw.ApplicationWindow):
         """OFFLINE button: stop listening, capture, speech, and tasks."""
         self._offline = True
         self.stop_current_work()
-        self.set_assistant_state(AssistantState.OFFLINE)
+        # Explicit caption (not detail=None): a late worker idle callback
+        # must never repaint this to "Transcribing…" — _set_status drops
+        # stale worker statuses while offline.
+        self.set_assistant_state(AssistantState.OFFLINE, "Offline")
 
     def _on_shell_model_selected(self, model: str) -> None:
         if model != self.settings.ollama_model:
@@ -243,10 +251,21 @@ class MainWindow(Adw.ApplicationWindow):
         app.set_accels_for_action("win.clear", ["<Control>l"])
         app.set_accels_for_action("win.preferences", ["<Control>comma"])
 
-    def _set_status(self, text: str, busy: bool = False) -> None:
+    def _set_status(self, text: str) -> None:
         # Caption detail preserves the state iconography: the UI renders
         # from self._assistant_state (issue #5), status strings are detail.
+        if self._offline and not self._status_allowed_offline(text):
+            # Stale worker idle callback (e.g. an in-flight "Transcribing…"
+            # finishing after OFFLINE was pressed). Worker threads are never
+            # joined, so their queued GLib.idle_add updates can land after
+            # the stop — OFFLINE means actually offline, drop them.
+            return
         self.shell.assistant.set_state(self._assistant_state, text)
+
+    @staticmethod
+    def _status_allowed_offline(text: str) -> bool:
+        """Status texts that may paint while OFFLINE (explicit confirmations)."""
+        return text in ("Offline", "Stopped.") or text.startswith("Asking with ")
 
     def set_assistant_state(self, state: AssistantState, detail: str | None = None) -> None:
         """Single entry point for assistant state (issue #5)."""
@@ -658,7 +677,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _load_whisper(self, model_name: str) -> None:
         self.settings.whisper_model = model_name
         self.config_store.save(self.settings)
-        self._set_status(f"Loading Whisper {model_name}…", busy=True)
+        self._set_status(f"Loading Whisper {model_name}…")
         self._start_progress()
         self.whisper.load_async(
             model_name,
@@ -747,8 +766,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.conversation_active:
             self.stop_conversation_mode()
         else:
-            self._offline = False
-            self.start_conversation_mode()
+            self._activate_conversation()
 
     def start_conversation_mode(self) -> None:
         if not self.whisper.ready:
@@ -768,9 +786,12 @@ class MainWindow(Adw.ApplicationWindow):
             threshold=self.settings.voice_threshold,
             silence_ms=self.settings.silence_ms,
             max_segment_seconds=self.settings.max_segment_seconds,
+            # _conversation_idle_status() still reports "Ready" here because
+            # conversation_active flips True below; spell out the active text.
+            idle_status=f"Awaiting orders — say “{self.settings.wake_word}” to ask something",
             on_woken=lambda: idle(self._on_conversation_woken),
             on_prompt=lambda text: idle(self._on_conversation_prompt, text),
-            on_status=lambda text: idle(self._set_status, text, True),
+            on_status=lambda text: idle(self._set_status, text),
             on_error=lambda text: idle(self._toast, text),
             on_exit=lambda kind: idle(self._on_conversation_exit, kind),
         )
@@ -845,6 +866,9 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_conversation_prompt(self, text: str) -> bool:
         if not text:
             return False
+        if self._offline or not self.conversation_active:
+            # Late worker callback after OFFLINE/stop: actually offline.
+            return False
         self.ask_ai(text)
         return False
 
@@ -891,7 +915,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _conversation_idle_status(self) -> str:
         return (
-            f"Listening — say “{self.settings.wake_word}” to ask something"
+            f"Awaiting orders — say “{self.settings.wake_word}” to ask something"
             if self.conversation_active
             else "Ready"
         )
@@ -918,7 +942,7 @@ class MainWindow(Adw.ApplicationWindow):
         # stale glyph fragments with GTK 4 on some NVIDIA/X11/Compiz desktops.
         if self.listening and text == "Transcribing…":
             return False
-        self._set_status(text, busy=self.listening)
+        self._set_status(text)
         return False
 
     def _queue_level(self, value: float) -> None:
@@ -972,7 +996,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.conversation.unmute()
         self.conversation.arm_prompt()
         self._toast("Interrupted — go ahead.")
-        self._set_status("Listening for your request…", busy=True)
+        self._set_status("Listening for your request…")
 
     def _stop_level_updates(self) -> None:
         if self._level_source:
@@ -982,6 +1006,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.shell.assistant.set_audio_level(0.0)
 
     def _append_transcript(self, text: str) -> bool:
+        if self._offline:
+            # In-flight transcribe finished after OFFLINE: actually offline.
+            return False
         end = self._transcript_buffer.get_end_iter()
         prefix = "" if self._transcript_buffer.get_char_count() == 0 else " "
         self._transcript_buffer.insert(end, prefix + text.strip())
@@ -1139,17 +1166,15 @@ class MainWindow(Adw.ApplicationWindow):
     ) -> bool:
         if not self._query_is_current(generation, cancel_event):
             return False
-        if (
+        has_pending_turn = (
             self.conversation_active
             and self._conversation_history
             and self._pending_user_generation == generation
-        ):
-            # This turn was abandoned (a spoken "cancel" or the Stop button),
-            # or its answer was lost: undo the user turn pushed when it started
-            # so the model's history stays coherent.
-            self._conversation_history.pop()
-        self._pending_user_generation = None
+        )
         if cancel_event.is_set():
+            if has_pending_turn:
+                finalize_conversation_turn(self._conversation_history, "")
+            self._pending_user_generation = None
             self._set_status("AI request stopped.")
             return False
         self._set_status("AI response complete.")
@@ -1159,10 +1184,12 @@ class MainWindow(Adw.ApplicationWindow):
         spoken = strip_reasoning(answer)
         if spoken != answer:
             self._response_buffer.set_text(spoken)
+        if has_pending_turn:
+            finalize_conversation_turn(self._conversation_history, spoken)
+        self._pending_user_generation = None
         if spoken and self.conversation_active:
-            self._conversation_history.append({"role": "assistant", "content": spoken})
             self._conversation_speak(spoken)
-        elif answer and self.settings.auto_speak:
+        elif spoken and self.settings.auto_speak:
             self.speak_response()
         else:
             self.set_assistant_state(

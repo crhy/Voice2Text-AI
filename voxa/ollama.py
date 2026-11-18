@@ -53,15 +53,20 @@ class OllamaClient:
         return [item for item in models if isinstance(item, dict)]
 
     def list_models(self) -> list[str]:
-        names = [item.get("name", "") for item in self._list_models_payload()]
-        return sorted(name for name in names if name)
+        names = (item.get("name") for item in self._list_models_payload())
+        return sorted(name for name in names if isinstance(name, str) and name)
 
     def list_models_detailed(self) -> list[ModelInfo]:
-        infos = [
-            ModelInfo(name=item["name"], size_bytes=int(item.get("size", 0) or 0))
-            for item in self._list_models_payload()
-            if item.get("name")
-        ]
+        infos: list[ModelInfo] = []
+        for item in self._list_models_payload():
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            try:
+                size = max(0, int(item.get("size", 0) or 0))
+            except (TypeError, ValueError):
+                size = 0
+            infos.append(ModelInfo(name=name, size_bytes=size))
         return sorted(infos, key=lambda info: info.name)
 
     def generate_stream(

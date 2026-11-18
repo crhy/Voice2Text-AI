@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import re
 import threading
+from collections import deque
 from collections.abc import Callable
 
 from .dictation import segment_stream
@@ -77,6 +78,23 @@ def detect_exit_phrase(text: str) -> str | None:
     return None
 
 
+def finalize_conversation_turn(
+    history: deque[dict[str, str]], response: str
+) -> bool:
+    """Pair the pending user message with a response, or discard the turn.
+
+    A failed, cancelled, or reasoning-only response must not leave an
+    unanswered user message in the model context.
+    """
+    if not history or history[-1].get("role") != "user":
+        return False
+    if not response:
+        history.pop()
+        return False
+    history.append({"role": "assistant", "content": response})
+    return True
+
+
 class ConversationController:
     """Listens for a wake word, then captures the next utterance as a prompt.
 
@@ -113,6 +131,7 @@ class ConversationController:
         on_status: Callable[[str], None],
         on_error: Callable[[str], None],
         on_exit: Callable[[str], None] | None = None,
+        idle_status: str = "Awaiting orders…",
     ) -> None:
         # The wake phase runs constantly in the background, so it uses a small,
         # dedicated model (see WAKE_WHISPER_MODEL in window.py) instead of
@@ -130,6 +149,9 @@ class ConversationController:
         self.on_status = on_status
         self.on_error = on_error
         self.on_exit = on_exit or (lambda _kind: None)
+        # Repainted whenever an utterance yields nothing actionable, so the
+        # caption never sticks on "Transcribing…" while idle.
+        self.idle_status = idle_status
         self.queue: queue.Queue[tuple[bytes, float] | None] = queue.Queue(maxsize=80)
         # Fed instead of the main queue while muted: the stream plays through
         # the speakers, so it is never treated as a prompt — but it still has
@@ -256,6 +278,7 @@ class ConversationController:
             whisper = self.prompt_whisper if waiting_for_prompt else self.wake_whisper
             text = self._transcribe(segment, whisper)
             if not text:
+                self.on_status(self.idle_status)
                 continue
 
             exit_kind = detect_exit_phrase(text)
@@ -273,6 +296,7 @@ class ConversationController:
             if not waiting_for_prompt:
                 remainder = strip_wake_word(text, self.wake_word)
                 if remainder is None:
+                    self.on_status(self.idle_status)
                     continue
                 self.on_woken()
                 if remainder:
