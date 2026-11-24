@@ -40,6 +40,28 @@ def _stable_field(properties, key: str) -> str:
     return ""
 
 
+def select_device(devices: list[AudioDevice], saved_id: str, saved_name: str) -> AudioDevice | None:
+    """Resolve a saved microphone choice against a fresh device scan.
+
+    Returns the first device whose identifier equals ``saved_id``, else the
+    first whose name equals ``saved_name`` case-insensitively (when
+    ``saved_name`` is truthy), else ``None``. A miss never returns
+    ``devices[0]``: the caller must know that the saved choice resolved to
+    nothing, so it can leave the stored choice untouched and let a later
+    launch match it again.
+    """
+    if saved_id:
+        for device in devices:
+            if device.identifier == saved_id:
+                return device
+    if saved_name:
+        needle = saved_name.casefold()
+        for device in devices:
+            if device.name.casefold() == needle:
+                return device
+    return None
+
+
 def is_monitor_source(properties, display_name: str = "") -> bool:
     """Return True when a source device is a loopback monitor, not a real microphone.
 

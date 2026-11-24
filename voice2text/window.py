@@ -11,7 +11,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
-from .audio import AudioCapture, AudioDevice  # noqa: E402
+from .audio import AudioCapture, AudioDevice, select_device  # noqa: E402
 from .catalog import CatalogUnavailable, load_catalog, refresh_and_cache, refresh_due  # noqa: E402
 from .config import ConfigStore  # noqa: E402
 from .conversation import ConversationController  # noqa: E402
@@ -378,25 +378,26 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             self.devices = self.audio.list_devices()
             if self.devices:
-                selected = next(
-                    (device for device in self.devices if device.identifier == self.settings.microphone_id),
-                    None,
+                selection = select_device(
+                    self.devices,
+                    self.settings.microphone_id,
+                    self.settings.microphone_name,
                 )
-                if selected is None and self.settings.microphone_name:
-                    saved_name = self.settings.microphone_name.casefold()
-                    selected = next(
-                        (device for device in self.devices if device.name.casefold() == saved_name),
-                        None,
-                    )
-                if selected is None:
-                    selected = self.devices[0]
-                if (
-                    self.settings.microphone_id != selected.identifier
-                    or self.settings.microphone_name != selected.name
-                ):
-                    self.settings.microphone_id = selected.identifier
-                    self.settings.microphone_name = selected.name
-                    self.config_store.save(self.settings)
+                saved_choice = bool(self.settings.microphone_id or self.settings.microphone_name)
+                if selection is not None or not saved_choice:
+                    # First run: nothing is saved yet, so adopt and remember
+                    # the first device.
+                    selected = selection or self.devices[0]
+                    if (
+                        self.settings.microphone_id != selected.identifier
+                        or self.settings.microphone_name != selected.name
+                    ):
+                        self.settings.microphone_id = selected.identifier
+                        self.settings.microphone_name = selected.name
+                        self.config_store.save(self.settings)
+                # A saved choice that matched nothing in this scan is left
+                # untouched (its id may simply be stale until the device
+                # returns); silently replacing it dropped the user's mic.
         except Exception as exc:  # noqa: BLE001 - platform boundary
             self._toast(f"Microphone scan failed: {exc}")
 
